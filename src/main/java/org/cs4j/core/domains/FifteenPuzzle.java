@@ -207,21 +207,22 @@ public final class FifteenPuzzle implements SearchDomain {
   
   @Override
   public State unpack(long word) {
-  	TileState dst = new TileState();
-    dst.h = 0;
-    dst.blank = -1;
+  	TileState ts = new TileState();
+    ts.blank = -1;
     for (int i = Ntiles - 1; i >= 0; i--) {
       int t = (int) word & 0xF;
       word >>= 4;
-      dst.tiles[i] = t;
+      ts.tiles[i] = t;
       if (t == 0)
-        dst.blank = i;
-      else
-        dst.h += md[t][i];
+        ts.blank = i;
+      else {
+      	ts.h += md[t][i];
+      	ts.d += md_unit[t][i];
+      }
       if (t == 1)
-        dst.one = i;
+        ts.one = i;
     }
-    return dst;
+    return ts;
   }  
  
   /*

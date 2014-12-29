@@ -88,7 +88,7 @@ public interface SearchDomain {
    * @param packed the long representation
    * @return the new state
    */
-  public State unpack(long packed);
+  public State unpack(long packed);  
   
   /**
    * The State interface.

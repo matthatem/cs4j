@@ -185,7 +185,13 @@ class SearchResultImpl implements SearchResult {
   	}
   	
   	void addOperator(Operator operator) {
-  		operators.add(operator);
+  		this.operators.add(operator);
+  	}
+  	
+  	void addOperators(List<Operator> operators) {
+  		for (Operator o : operators) {
+  			this.operators.add(o);
+  		}
   	}
   	
   	void setCost(double cost) {
