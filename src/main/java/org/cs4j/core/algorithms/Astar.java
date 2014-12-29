@@ -36,19 +36,6 @@ public final class Astar implements SearchAlgorithm {
   private BinHeap<Node> open = 
       new BinHeap<Node>(new NodeComparator());
   
-  /**
-   * The constructor.
-   * 
-   * @param domain the search domain
-   */
-  public Astar() {
-    this(1.0);
-  }
-  
-  public Astar(double weight) {
-    this.weight = weight;
-  }
-  
   @Override
   public SearchResult search(SearchDomain domain) {
   	this.domain = domain;
