@@ -26,8 +26,8 @@ import org.cs4j.core.SearchResult;
 
 /**
  * The search result class.
- *
- * @param <T> the state type
+ * 
+ * @author Matthew Hatem
  */
 class SearchResultImpl implements SearchResult {
   

@@ -26,8 +26,7 @@ import org.cs4j.core.algorithms.SearchResultImpl.SolutionImpl;
 /**
  * The IDA* class.
  *
- * @param <T> the state type.
- * @param <O> the operator type.
+ * @author Matthew Hatem
  */
 public final class IDAstar implements SearchAlgorithm {
   

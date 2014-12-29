@@ -27,6 +27,8 @@ import org.cs4j.core.SearchDomain;
 
 /**
  * The 4x4 sliding-tiles domain class.
+ * 
+ * @author Matthew Hatem
  */
 public final class FifteenPuzzle implements SearchDomain {
   

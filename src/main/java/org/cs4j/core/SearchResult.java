@@ -20,40 +20,45 @@ import java.util.List;
 
 import org.cs4j.core.SearchDomain.Operator;
 
+/**
+ * The search result interface.
+ * 
+ * @author Matthew Hatem
+ */
 public interface SearchResult {
 	
   /**
    * Returns the solution path.
    * 
-   * @return the solution path.
+   * @return the solution path
    */
   public List<Solution> getSolutions();
 		  
   /**
    * Returns expanded count.
    * 
-   * @return expanded count.
+   * @return expanded count
    */
   public double getExpanded();
 	  
   /**
    * Returns generated count.
    * 
-   * @return generated count.
+   * @return generated count
    */
 	public double getGenerated();
 	  
 	/**
 	 * Returns the wall time in milliseconds.
 	 * 
-	 * @return the wall time in milliseconds.
+	 * @return the wall time in milliseconds
 	 */
 	public long getWallTimeMillis();
 	  
 	/**
 	 * Returns the CPU time in milliseconds.
 	 * 
-	 * @return the CPU time in milliseconds.
+	 * @return the CPU time in milliseconds
 	 */
 	public long getCpuTimeMillis();
 	

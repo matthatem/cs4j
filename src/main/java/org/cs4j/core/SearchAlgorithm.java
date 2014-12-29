@@ -19,7 +19,7 @@ package org.cs4j.core;
 /**
  * The search algorithm interface.
  *
- * @param <T> the state type
+ * @author Matthew Hatem
  */
 public interface SearchAlgorithm {
   

@@ -19,8 +19,7 @@ package org.cs4j.core;
 /**
  * The search domain interface.
  *
- * @param <T> state type
- * @param <O> operator type
+ * @author Matthew Hatem
  */
 public interface SearchDomain {
   
