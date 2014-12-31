@@ -27,6 +27,7 @@ import org.cs4j.core.SearchAlgorithm;
 import org.cs4j.core.SearchResult;
 import org.cs4j.core.SearchResult.Solution;
 import org.cs4j.core.algorithms.Astar;
+import org.cs4j.core.algorithms.Astar.HeapType;
 import org.cs4j.core.domains.FifteenPuzzle;
 import org.junit.Test;
 
@@ -37,7 +38,7 @@ public class TestWAStar {
 		try {
 			InputStream is = new FileInputStream(new File("input/fifteenpuzzle/korf100/82"));
 			FifteenPuzzle puzzle = new FifteenPuzzle(is);
-			SearchAlgorithm algo = new Astar(2.0);			
+			SearchAlgorithm algo = new Astar(2, HeapType.BIN);
 			SearchResult result = algo.search(puzzle);
 			Solution sol = result.getSolutions().get(0);
 			
@@ -47,8 +48,8 @@ public class TestWAStar {
 			Assert.assertTrue(result.getWallTimeMillis() < 200);
 			Assert.assertTrue(result.getCpuTimeMillis() > 1);
 			Assert.assertTrue(result.getCpuTimeMillis() < 200);
-			Assert.assertTrue(result.getExpanded() == 34956);
-			Assert.assertTrue(result.getGenerated() == 72586);				
+			Assert.assertTrue(result.getGenerated() == 63063);	
+			Assert.assertTrue(result.getExpanded() == 30631);
 			Assert.assertTrue(sol.getCost() == 74);
 			Assert.assertTrue(sol.getLength() == 75);
 			

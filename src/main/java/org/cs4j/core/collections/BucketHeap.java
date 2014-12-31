@@ -47,8 +47,12 @@ public final class BucketHeap<T extends Heapable> implements Heap<T> {
       bucket = new Bucket<>(buckets.length);
       buckets[p0] = bucket;
     }
+    n.setIndex(0, p0);
+    
     int p1 = (int)n.getRank(1);
     bucket.push(n, p1);
+    n.setIndex(1, p1);
+    
     fill++;
   }
   
@@ -72,12 +76,7 @@ public final class BucketHeap<T extends Heapable> implements Heap<T> {
 		if (p0 > buckets.length-1 || p0 < 0)
 			throw new IllegalArgumentException();
 		Bucket<T> b = buckets[p0];
-		int p1 = (int)t.getIndex(1);
-		if (p1 > b.bins.length-1 || p1 < 0)
-			throw new IllegalArgumentException();
-		// remove t
-		List<T> list = b.bins[p1];
-		list.remove(t);
+		b.remove(t);
 		// add t
 		add(t);
 	}
@@ -99,7 +98,7 @@ public final class BucketHeap<T extends Heapable> implements Heap<T> {
   	return fill;
   }
 
-  private static final class Bucket<T> {
+  private static final class Bucket<T extends Heapable> {
     private int fill, max;
     private ArrayList[] bins;
     
@@ -131,6 +130,17 @@ public final class BucketHeap<T extends Heapable> implements Heap<T> {
       maxBin.remove(last);
       fill--;
       return n;
+    }
+    
+    private void remove(T t) {
+  		int p1 = (int)t.getIndex(1);
+  		if (p1 > bins.length-1 || p1 < 0)
+  			throw new IllegalArgumentException();
+  		// remove t
+  		List<T> list = bins[p1];
+  		if (!list.remove(t))
+  			throw new IllegalArgumentException();
+  		fill--;
     }
     
     private boolean isEmpty() {

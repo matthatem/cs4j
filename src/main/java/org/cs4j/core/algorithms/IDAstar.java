@@ -34,8 +34,6 @@ public final class IDAstar implements SearchAlgorithm {
   private double weight = 1.0;
   private double bound;
   private double minoob;
-  private long expanded;
-  private long generated;
 
   public IDAstar() {
   	solution = new SolutionImpl();
@@ -51,20 +49,18 @@ public final class IDAstar implements SearchAlgorithm {
     int i = 0;
     do {
       minoob = -1;
-      boolean goal = dfs(domain, root, 0, null);
+      boolean goal = dfs(domain, root, 0, null, result);
       i++;
-      result.addIteration(i, bound, expanded, generated);
+      result.addIteration(i, bound, result.expanded, result.generated);
       bound = minoob;
       if (goal) break;
     } while (true);
     result.stopTimer();
-    result.setGenerated(generated);
-    result.setExpanded(expanded);
     result.addSolution(solution);
     return result;
   }
 
-  boolean dfs(SearchDomain domain, State parent, double cost, Operator pop) {
+  boolean dfs(SearchDomain domain, State parent, double cost, Operator pop, SearchResultImpl result) {
     double f = cost + weight*parent.getH();
     
     if (f <= bound && domain.isGoal(parent)) {
@@ -79,16 +75,16 @@ public final class IDAstar implements SearchAlgorithm {
       return false;
     }
 
-    expanded++;
+    result.expanded++;
     int numOps = domain.getNumOperators(parent);
     for (int i=0; i<numOps; i++) {
     	Operator op = domain.getOperator(parent, i);
       if (op.equals(pop))
         continue;
 
-      generated++;
+      result.generated++;
       State child = domain.applyOperator(parent, op);
-      boolean goal = dfs(domain, child, op.getCost(parent)+cost, op.reverse(parent));
+      boolean goal = dfs(domain, child, op.getCost(parent)+cost, op.reverse(parent), result);
       if (goal) {
         solution.addOperator(op);
         return true;

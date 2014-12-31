@@ -47,8 +47,8 @@ public class TestIDAStar {
 			Assert.assertTrue(result.getWallTimeMillis() < 200);
 			Assert.assertTrue(result.getCpuTimeMillis() > 1);
 			Assert.assertTrue(result.getCpuTimeMillis() < 200);
-			Assert.assertTrue(result.getExpanded() == 269708);
-			Assert.assertTrue(result.getGenerated() == 546343);				
+			Assert.assertTrue(result.getGenerated() == 546343);
+			Assert.assertTrue(result.getExpanded() == 269708);			
 			Assert.assertTrue(sol.getCost() == 45);
 			Assert.assertTrue(sol.getLength() == 45+1);
 			

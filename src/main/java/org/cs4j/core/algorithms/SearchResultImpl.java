@@ -31,8 +31,10 @@ import org.cs4j.core.SearchResult;
  */
 class SearchResultImpl implements SearchResult {
   
-  private long expanded;
-  private long generated;
+  long expanded;
+  long generated;
+  long duplicates;
+  long reopened;
   private long startWallTimeMillis;
   private long startCpuTimeMillis;
   private long stopWallTimeMillis;

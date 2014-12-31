@@ -29,6 +29,7 @@ import org.cs4j.core.SearchDomain.State;
 import org.cs4j.core.SearchResult;
 import org.cs4j.core.algorithms.SearchResultImpl.SolutionImpl;
 import org.cs4j.core.collections.BinHeap;
+import org.cs4j.core.collections.BucketHeap;
 import org.cs4j.core.collections.Heap;
 import org.cs4j.core.collections.Heapable;
 
@@ -40,22 +41,20 @@ import org.cs4j.core.collections.Heapable;
  */
 public final class Astar implements SearchAlgorithm {
     
-  private List<Operator> path = new ArrayList<Operator>(3);
   private SearchDomain domain;
-  private long expanded;
-  private long generated;
-  private double weight = 1;
+  private Heap<Node> open;
   
+  private double weight = 1.0;  
+  private List<Operator> path = new ArrayList<Operator>(3);
   private Map<Long, Node> closed = new HashMap<>();
   
-  private Heap<Node> open = 
-      new BinHeap<Node>(new NodeComparator());
+  public enum HeapType {BIN, BUCKET};
   
   /**
    * The Constructor
    */
   public Astar() {
-  	this(1.0);
+  	this(1.0, HeapType.BIN);
   }
   
   /**
@@ -64,7 +63,31 @@ public final class Astar implements SearchAlgorithm {
    * @param weight the weight for Weighted A*
    */
   public Astar(double weight) {
+  	this(weight, HeapType.BIN);
+  }
+  
+  /**
+   * The Constructor
+   * 
+   * @param weight the weight for Weighted A*
+   * @param heapType the type of heap to use (BIN | BUCKET)
+   */
+  public Astar(double weight, HeapType heapType) {
   	this.weight = weight;
+  	this.open = buildHeap(heapType, 100);
+  }
+  
+  private Heap<Node> buildHeap(HeapType heapType, int size) {
+  	Heap<Node> heap = null;
+  	switch(heapType) {
+  	case BUCKET:
+  		heap = new BucketHeap<>(size);
+  		break;  	
+  	case BIN:
+  		heap = new BinHeap<>(new NodeComparator());
+  		break;
+  	}
+  	return heap;
   }
   
   @Override
@@ -75,10 +98,10 @@ public final class Astar implements SearchAlgorithm {
     
   	SearchResultImpl result = new SearchResultImpl();
   	result.startTimer();
-    Node initNode = new Node (state);    
+    Node initNode = new Node(state);    
     open.add(initNode);
     closed.put(initNode.packed, initNode);
-    while (!open.isEmpty() && path.isEmpty()) {
+    while (!open.isEmpty()) {
       Node n = open.poll();
       state = domain.unpack(n.packed);
       
@@ -90,30 +113,35 @@ public final class Astar implements SearchAlgorithm {
         }
         break;
       }
-      
+            
       // expand the node
-      expanded++;
+      result.expanded++;
       for (int i = 0; i < domain.getNumOperators(state); i++) {
           Operator op = domain.getOperator(state, i);
           if (op.equals(n.pop)) {
               continue;
           }
-          generated++;
-          State childState = domain.applyOperator(state, op);          
+          result.generated++;
+          State childState = domain.applyOperator(state, op);
           Node node = new Node(childState, n, op, op.reverse(state));
           
           // merge duplicates
           if (closed.containsKey(node.packed)) {
+          	result.duplicates++;
             Node dup = closed.get(node.packed);
             if (dup.g > node.g) {
+              dup.f = node.f;
+              dup.g = node.g;
+              dup.op = node.op;
+              dup.pop = node.pop;
+              dup.parent = node.parent;
               if (dup.heapIndex[0] != -1) {
-                dup.f = node.f;
-                dup.g = node.g;
-                dup.parent = node.parent;
                 open.update(dup);
               }
-              open.add(node);
-              closed.put(node.packed, node);
+              else {
+              	result.reopened++;
+              	open.add(dup);
+              }
             }
           }
           else {
@@ -125,8 +153,6 @@ public final class Astar implements SearchAlgorithm {
    
     // generate result
     result.stopTimer();
-    result.setExpanded(expanded);
-    result.setGenerated(generated);
     if (path != null && path.size() > 0) {
     	SolutionImpl solution = new SolutionImpl();
     	solution.addOperators(path);
@@ -147,19 +173,19 @@ public final class Astar implements SearchAlgorithm {
     long packed;
     int[] heapIndex = new int[]{-1, -1};
     
-    private Node (State state) {
+    private Node(State state) {
     	this(state, null, 0);
     }
     
-    private Node (State state, Node parent, Operator op, Operator pop) {
+    private Node(State state, Node parent, Operator op, Operator pop) {
       this(state, parent, op.getCost(state));
     	this.pop = pop;
       this.op = op;
     }
     
-    private Node (State state, Node parent, double cost) {
+    private Node(State state, Node parent, double cost) {
       this.g = (parent != null) ? parent.g+cost : cost;
-      this.f = g + (weight*state.getH());      
+      this.f = g + (weight*state.getH());
       this.parent = parent;
       packed = domain.pack(state);
     }
@@ -187,7 +213,7 @@ public final class Astar implements SearchAlgorithm {
   	@Override
     public int compare(final Node a, final Node b) {
       if (a.f < b.f) return -1;
-      if (a.f > b.f) return 1;
+      if (a.f > b.f) return 1;      
       if (a.g > b.g) return -1;
       if (a.g < b.g) return 1;
       return 0;
