@@ -29,7 +29,8 @@ import org.cs4j.core.SearchDomain.State;
 import org.cs4j.core.SearchResult;
 import org.cs4j.core.algorithms.SearchResultImpl.SolutionImpl;
 import org.cs4j.core.collections.BinHeap;
-import org.cs4j.core.collections.Indexable;
+import org.cs4j.core.collections.Heap;
+import org.cs4j.core.collections.Heapable;
 
 /**
  * The A* class.  This class implements the A* algorithm using a 
@@ -47,7 +48,7 @@ public final class Astar implements SearchAlgorithm {
   
   private Map<Long, Node> closed = new HashMap<>();
   
-  private BinHeap<Node> open = 
+  private Heap<Node> open = 
       new BinHeap<Node>(new NodeComparator());
   
   /**
@@ -105,11 +106,11 @@ public final class Astar implements SearchAlgorithm {
           if (closed.containsKey(node.packed)) {
             Node dup = closed.get(node.packed);
             if (dup.g > node.g) {
-              if (dup.getIndex() != -1) {
+              if (dup.heapIndex[0] != -1) {
                 dup.f = node.f;
                 dup.g = node.g;
                 dup.parent = node.parent;
-                open.update(dup.getIndex());
+                open.update(dup);
               }
               open.add(node);
               closed.put(node.packed, node);
@@ -139,12 +140,12 @@ public final class Astar implements SearchAlgorithm {
   /*
    * The node class
    */
-  private final class Node implements Indexable {
+  private final class Node implements Heapable {
     double f, g;
     Operator op, pop;
     Node parent;
     long packed;
-    int heapIndex = -1;
+    int[] heapIndex = new int[]{-1, -1};
     
     private Node (State state) {
     	this(state, null, 0);
@@ -164,13 +165,18 @@ public final class Astar implements SearchAlgorithm {
     }
     
     @Override
-    public int getIndex() {
-      return heapIndex;
+    public int getIndex(int level) {
+      return heapIndex[level];
     }
     
     @Override
-    public void setIndex(int index) {
-      this.heapIndex = index;
+    public void setIndex(int level, int index) {
+      this.heapIndex[level] = index;
+    }
+    
+    @Override
+    public double getRank(int level) {
+    	return (level == 0) ? f : g;
     }
   }
   

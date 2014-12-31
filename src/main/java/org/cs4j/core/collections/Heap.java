@@ -17,24 +17,24 @@
 package org.cs4j.core.collections;
 
 /**
- * The indexable interface used by intrusive data structures.
+ * A basic heap interface
  * 
  * @author Matthew Hatem
+ *
+ * @param <T> the element type
  */
-public interface Indexable {
+public interface Heap<T> {
+	
+	public void add(T element);
+	
+	public T poll();
+	
+	public void update(T t);
+	
+	public boolean isEmpty();
+	
+	public int size();
+	
+	public void clear();
 
-  /**
-   * Sets the indexes of this object in the data structure.
-   * 
-   * @param index
-   */
-  public void setIndex(int index);
-  
-  /**
-   * Returns the index of this object in the data structure.
-   * 
-   * @return
-   */
-  public int getIndex();
-  
 }

@@ -25,7 +25,7 @@ import java.util.Comparator;
  * 
  * @author Matthew Hatem
  */
-public class BinHeap<T extends Indexable> {
+public class BinHeap<T extends Heapable> implements Heap<T> {
 	
   private final ArrayList<T> heap;
 	private final Comparator<T> cmp;
@@ -70,7 +70,8 @@ public class BinHeap<T extends Indexable> {
 	  heap.clear();
 	}
 	
-	public void update(int i) {
+	public void update(T t) {
+		int i = t.getIndex(0);
 	  if (i < 0 || i > heap.size())
 	    throw new IllegalArgumentException();
 	  i = pullUp(i);
@@ -109,7 +110,7 @@ public class BinHeap<T extends Indexable> {
 	}
 	
 	private void setIndex(T t, int i) {
-	  t.setIndex(i);
+	  t.setIndex(0, i);
 	}
 	
 	private void swap(int i, int j) {	  
