@@ -63,7 +63,7 @@ public class TestAStar {
 		try {
 			InputStream is = new FileInputStream(new File("input/fifteenpuzzle/korf100/12"));
 			FifteenPuzzle puzzle = new FifteenPuzzle(is);
-			SearchAlgorithm algo = new Astar(1.0, HeapType.BUCKET);			
+			SearchAlgorithm algo = new Astar(HeapType.BUCKET);			
 			SearchResult result = algo.search(puzzle);
 			Solution sol = result.getSolutions().get(0);
 			

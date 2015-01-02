@@ -39,7 +39,7 @@ import org.cs4j.core.collections.Heapable;
  * 
  * @author Matthew Hatem
  */
-public final class Astar implements SearchAlgorithm {
+public class Astar implements SearchAlgorithm {
     
   private SearchDomain domain;
   private Heap<Node> open;
@@ -60,19 +60,13 @@ public final class Astar implements SearchAlgorithm {
   /**
    * The Constructor
    * 
-   * @param weight the weight for Weighted A*
-   */
-  public Astar(double weight) {
-  	this(weight, HeapType.BIN);
-  }
-  
-  /**
-   * The Constructor
-   * 
-   * @param weight the weight for Weighted A*
    * @param heapType the type of heap to use (BIN | BUCKET)
    */
-  public Astar(double weight, HeapType heapType) {
+  public Astar(HeapType heapType) {
+  	this(1.0, heapType);
+  }
+    
+  protected Astar(double weight, HeapType heapType) {
   	this.weight = weight;
   	this.open = buildHeap(heapType, 100);
   }

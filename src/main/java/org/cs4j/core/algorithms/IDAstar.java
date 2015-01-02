@@ -28,7 +28,7 @@ import org.cs4j.core.algorithms.SearchResultImpl.SolutionImpl;
  *
  * @author Matthew Hatem
  */
-public final class IDAstar implements SearchAlgorithm {
+public class IDAstar implements SearchAlgorithm {
   
 	private SearchResultImpl result;
 	private SolutionImpl solution;
@@ -40,7 +40,7 @@ public final class IDAstar implements SearchAlgorithm {
   	this(1.0);
   }
   
-  public IDAstar(double weight) {
+  protected IDAstar(double weight) {
   	solution = new SolutionImpl();
   	this.weight = weight;
   }

@@ -121,9 +121,9 @@ public class RBFS implements SearchAlgorithm {
     // explore virtual fringe
     Collections.sort(succ);
     Node top = succ.get(0);
-    while (top.fPrime <= u && top.fPrime < Double.MAX_VALUE) {
+    while (getRank(top, weight) <= u && top.fPrime < Double.MAX_VALUE) {
       double uPrime = (succ.size() == 1) 
-          ? u : Math.min(succ.get(1).fPrime, u);
+          ? u : Math.min(getRank(succ.get(1), weight), u);
       top.fPrime = rbfs(top, uPrime);
       Collections.sort(succ);
       top = succ.get(0);       
@@ -132,7 +132,11 @@ public class RBFS implements SearchAlgorithm {
     return top.fPrime;    
   }
   
-  private final class Node implements Comparable<Node> {
+  protected double getRank(Node n, double weight) {
+  	return n.fPrime;
+  }
+  
+  protected final class Node implements Comparable<Node> {
     double f, g;
     Operator op, pop;
     State state;
