@@ -17,6 +17,7 @@
 package org.cs4j.core.algorithms;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -34,8 +35,7 @@ import org.cs4j.core.collections.Heap;
 import org.cs4j.core.collections.Heapable;
 
 /**
- * The A* class.  This class implements the A* algorithm using a 
- * binary heap priority queue.
+ * A* Search and Weighted A* Search
  * 
  * @author Matthew Hatem
  */
@@ -43,8 +43,8 @@ public final class Astar implements SearchAlgorithm {
     
   private SearchDomain domain;
   private Heap<Node> open;
+  private double weight;  
   
-  private double weight = 1.0;  
   private List<Operator> path = new ArrayList<Operator>(3);
   private Map<Long, Node> closed = new HashMap<>();
   
@@ -94,10 +94,11 @@ public final class Astar implements SearchAlgorithm {
   public SearchResult search(SearchDomain domain) {
   	this.domain = domain;
   	double goalCost = Double.MAX_VALUE;
-  	State state = domain.initialState();
     
   	SearchResultImpl result = new SearchResultImpl();
   	result.startTimer();
+  	
+  	State state = domain.initialState();
     Node initNode = new Node(state);    
     open.add(initNode);
     closed.put(initNode.packed, initNode);
@@ -111,6 +112,7 @@ public final class Astar implements SearchAlgorithm {
         for (Node p = n; p != null; p = p.parent) {
             path.add(p.op);
         }
+        Collections.reverse(path);
         break;
       }
             
@@ -151,8 +153,8 @@ public final class Astar implements SearchAlgorithm {
       }
     }
    
-    // generate result
     result.stopTimer();
+
     if (path != null && path.size() > 0) {
     	SolutionImpl solution = new SolutionImpl();
     	solution.addOperators(path);
@@ -174,20 +176,17 @@ public final class Astar implements SearchAlgorithm {
     int[] heapIndex = new int[]{-1, -1};
     
     private Node(State state) {
-    	this(state, null, 0);
+    	this(state, null, null, null);
     }
     
     private Node(State state, Node parent, Operator op, Operator pop) {
-      this(state, parent, op.getCost(state));
-    	this.pop = pop;
-      this.op = op;
-    }
-    
-    private Node(State state, Node parent, double cost) {
+    	double cost = (op != null) ? op.getCost(state) : 0;
       this.g = (parent != null) ? parent.g+cost : cost;
       this.f = g + (weight*state.getH());
       this.parent = parent;
       packed = domain.pack(state);
+    	this.pop = pop;
+      this.op = op;
     }
     
     @Override

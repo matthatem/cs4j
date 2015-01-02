@@ -26,19 +26,18 @@ import junit.framework.Assert;
 import org.cs4j.core.SearchAlgorithm;
 import org.cs4j.core.SearchResult;
 import org.cs4j.core.SearchResult.Solution;
-import org.cs4j.core.algorithms.Astar;
-import org.cs4j.core.algorithms.Astar.HeapType;
+import org.cs4j.core.algorithms.RBFS;
 import org.cs4j.core.domains.FifteenPuzzle;
 import org.junit.Test;
 
-public class TestWAStar {
+public class TestRBFS {
 	
 	@Test
-	public void testWAstarFifteenPuzzleUnit() {
+	public void testRBFSFifteenPuzzleUnit() {
 		try {
-			InputStream is = new FileInputStream(new File("input/fifteenpuzzle/korf100/82"));
+			InputStream is = new FileInputStream(new File("input/fifteenpuzzle/korf100/12"));
 			FifteenPuzzle puzzle = new FifteenPuzzle(is);
-			SearchAlgorithm algo = new Astar(2, HeapType.BIN);
+			SearchAlgorithm algo = new RBFS();			
 			SearchResult result = algo.search(puzzle);
 			Solution sol = result.getSolutions().get(0);
 			
@@ -48,10 +47,10 @@ public class TestWAStar {
 			Assert.assertTrue(result.getWallTimeMillis() < 200);
 			Assert.assertTrue(result.getCpuTimeMillis() > 1);
 			Assert.assertTrue(result.getCpuTimeMillis() < 200);
-			Assert.assertTrue(result.getGenerated() == 63063);	
-			Assert.assertTrue(result.getExpanded() == 30631);
-			Assert.assertTrue(sol.getCost() == 74);
-			Assert.assertTrue(sol.getLength() == 75);
+			Assert.assertTrue(result.getGenerated() == 301098);
+			Assert.assertTrue(result.getExpanded() == 148421);			
+			Assert.assertTrue(sol.getCost() == 45);
+			Assert.assertTrue(sol.getLength() == 45+1);
 			
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();			
@@ -59,8 +58,8 @@ public class TestWAStar {
 	}
 	
 	public static void main(String[] args) {
-		TestWAStar test = new TestWAStar();
-		test.testWAstarFifteenPuzzleUnit();
+		TestRBFS test = new TestRBFS();
+		test.testRBFSFifteenPuzzleUnit();
 	}
 
 }
