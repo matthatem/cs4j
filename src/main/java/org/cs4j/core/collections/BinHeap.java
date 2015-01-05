@@ -25,31 +25,41 @@ import java.util.Comparator;
  * 
  * @author Matthew Hatem
  */
-public class BinHeap<T extends Heapable> implements Heap<T> {
+public class BinHeap<E extends SearchQueueElement> implements SearchQueue<E> {
 	
-  private final ArrayList<T> heap;
-	private final Comparator<T> cmp;
+  final ArrayList<E> heap;
+	private final Comparator<E> cmp;
+	private final int key;
 	
-	public BinHeap(Comparator<T> cmp) {
-	  this.heap = new ArrayList<T>();
+	public BinHeap(Comparator<E> cmp, int key) {
+	  this.heap = new ArrayList<E>();
 		this.cmp = cmp;
+		this.key = key;
 	}
 	
+	@Override
+	public int getKey() {
+		return key;
+	}
+	
+	@Override
 	public boolean isEmpty() {
 		return heap.isEmpty();
 	}	
 	
+	@Override
 	public int size() {
 	  return heap.size();
 	}
 	
-	public T poll() {
+	@Override
+	public E poll() {
 		if (heap.isEmpty())
 		  return null;		
-		T t = heap.get(0);
-    setIndex(t, -1);    
+		E e = heap.get(0);
+    setIndex(e, -1);    
 		if (heap.size() > 1) {
-		  T b = heap.remove(heap.size()-1);
+		  E b = heap.remove(heap.size()-1);
 		  heap.set(0, b);
 		  setIndex(b, 0);
 		  pushDown(0);
@@ -57,26 +67,57 @@ public class BinHeap<T extends Heapable> implements Heap<T> {
 		else {
 		  heap.remove(0);
 		}
-		return t;
+		return e;
 	}
 	
-	public void add(T i) {
-	  heap.add(i);
-	  setIndex(i, heap.size()-1);
+	@Override
+	public E peek() {
+		if (heap.isEmpty())
+			return null;
+		return heap.get(0);
+	}
+	
+	@Override
+	public void add(E e) {
+	  heap.add(e);
+	  setIndex(e, heap.size()-1);
 	  pullUp(heap.size()-1);
 	}
 	
+	@Override
 	public void clear() {
 	  heap.clear();
 	}
 	
-	public void update(T t) {
-		int i = t.getIndex(0);
+	@Override
+	public void update(E e) {
+		int i = e.getIndex(key);
 	  if (i < 0 || i > heap.size())
 	    throw new IllegalArgumentException();
 	  i = pullUp(i);
 	  pushDown(i);
 	}	
+		
+	@Override
+	public E remove(E e) {
+	  int ix = e.getIndex(key);
+	  return removeAt(ix);
+	}
+	
+	protected E removeAt(int ix) {
+		E toReturn = heap.get(ix);
+		setIndex(toReturn, -1);
+		if (heap.size() - 1 != ix) {
+			heap.set(ix, heap.get(heap.size() - 1));
+			setIndex(heap.get(ix), ix);
+		}
+		heap.remove(heap.size() - 1);
+		if (ix < heap.size()) {
+			pullUp(ix);
+			pushDown(ix);
+		}
+		return toReturn;
+	}
 	
 	private int pullUp(int i) {
 		if (i == 0) 
@@ -104,23 +145,23 @@ public class BinHeap<T extends Heapable> implements Heap<T> {
 	}
 	
 	private int compare(int i, int j) {
-	  T a = heap.get(i);
-	  T b = heap.get(j);
+	  E a = heap.get(i);
+	  E b = heap.get(j);
 	  return cmp.compare(a, b);
 	}
 	
-	private void setIndex(T t, int i) {
-	  t.setIndex(0, i);
+	private void setIndex(E e, int i) {
+	  e.setIndex(key, i);
 	}
 	
 	private void swap(int i, int j) {	  
-	  T it = heap.get(i);
-	  T jt = heap.get(j);
+	  E iE = heap.get(i);
+	  E jE = heap.get(j);
 	  	  
-	  heap.set(i, jt);
-	  setIndex(jt, i);
-	  heap.set(j, it);
-	  setIndex(it, j);
+	  heap.set(i, jE);
+	  setIndex(jE, i);
+	  heap.set(j, iE);
+	  setIndex(iE, j);
 	}
 	
 	private int parent(int i) {
@@ -134,4 +175,5 @@ public class BinHeap<T extends Heapable> implements Heap<T> {
 	private int right (int i) {
 	  return 2 * i + 2;
 	}
+
 }

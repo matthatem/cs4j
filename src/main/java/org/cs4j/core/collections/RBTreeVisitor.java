@@ -16,25 +16,8 @@
  */
 package org.cs4j.core.collections;
 
-/**
- * A basic heap interface
- * 
- * @author Matthew Hatem
- *
- * @param <T> the element type
- */
-public interface Heap<T> {
-	
-	public void add(T element);
-	
-	public T poll();
-	
-	public void update(T t);
-	
-	public boolean isEmpty();
-	
-	public int size();
-	
-	public void clear();
+public interface RBTreeVisitor<E> {
 
+  public void visit(E e, int op);
+  
 }

@@ -16,33 +16,10 @@
  */
 package org.cs4j.core.collections;
 
-/**
- * The heapable interface used by intrusive data structures.
- * 
- * @author Matthew Hatem
- */
-public interface Heapable {
-
-  /**
-   * Sets the indexes of this object in the data structure.
-   * 
-   * @param index
-   */
-  public void setIndex(int level, int index);
+public interface RBTreeElement<K extends RBTreeElement<K,V>,V> {
   
-  /**
-   * Returns the index of this object in the data structure.
-   * 
-   * @return
-   */
-  public int getIndex(int level);
+	public RBTreeNode<K,V> getNode();
   
-  /**
-   * Returns the rank at the specified level of this Heapable.
-   *  
-   * @param level the rank level
-   * @return the rank at the specified level
-   */
-  public double getRank(int level);
-  
+	public void setNode(RBTreeNode<K,V> Node);
+	
 }

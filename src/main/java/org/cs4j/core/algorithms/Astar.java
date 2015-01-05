@@ -31,8 +31,8 @@ import org.cs4j.core.SearchResult;
 import org.cs4j.core.algorithms.SearchResultImpl.SolutionImpl;
 import org.cs4j.core.collections.BinHeap;
 import org.cs4j.core.collections.BucketHeap;
-import org.cs4j.core.collections.Heap;
-import org.cs4j.core.collections.Heapable;
+import org.cs4j.core.collections.BucketHeap.BucketHeapElement;
+import org.cs4j.core.collections.SearchQueue;
 
 /**
  * A* Search and Weighted A* Search
@@ -40,11 +40,13 @@ import org.cs4j.core.collections.Heapable;
  * @author Matthew Hatem
  */
 public class Astar implements SearchAlgorithm {
+	
+	private static final int QID = 0;
     
   private SearchDomain domain;
-  private Heap<Node> open;
+  private SearchQueue<Node> open;
   private double weight;  
-  
+  private HeapType heapType;
   private List<Operator> path = new ArrayList<Operator>(3);
   private Map<Long, Node> closed = new HashMap<>();
   
@@ -68,17 +70,18 @@ public class Astar implements SearchAlgorithm {
     
   protected Astar(double weight, HeapType heapType) {
   	this.weight = weight;
+  	this.heapType = heapType;
   	this.open = buildHeap(heapType, 100);
   }
   
-  private Heap<Node> buildHeap(HeapType heapType, int size) {
-  	Heap<Node> heap = null;
+  private SearchQueue<Node> buildHeap(HeapType heapType, int size) {
+  	SearchQueue<Node> heap = null;
   	switch(heapType) {
   	case BUCKET:
-  		heap = new BucketHeap<>(size);
+  		heap = new BucketHeap<>(size, QID);
   		break;  	
   	case BIN:
-  		heap = new BinHeap<>(new NodeComparator());
+  		heap = new BinHeap<>(new NodeComparator(), 0);
   		break;
   	}
   	return heap;
@@ -131,7 +134,7 @@ public class Astar implements SearchAlgorithm {
               dup.op = node.op;
               dup.pop = node.pop;
               dup.parent = node.parent;
-              if (dup.heapIndex[0] != -1) {
+              if (dup.getIndex(open.getKey()) != -1) {
                 open.update(dup);
               }
               else {
@@ -162,18 +165,20 @@ public class Astar implements SearchAlgorithm {
   /*
    * The node class
    */
-  private final class Node implements Heapable {
+  private final class Node extends SearchQueueElementImpl implements BucketHeapElement {
     double f, g;
     Operator op, pop;
     Node parent;
     long packed;
-    int[] heapIndex = new int[]{-1, -1};
+    int[] secondaryIndex;
     
     private Node(State state) {
     	this(state, null, null, null);
     }
     
     private Node(State state, Node parent, Operator op, Operator pop) {
+    	super(1);
+    	secondaryIndex = new int[(heapType == HeapType.BUCKET) ? 2 : 1];
     	double cost = (op != null) ? op.getCost(state) : 0;
       this.g = (parent != null) ? parent.g+cost : cost;
       this.f = g + (weight*state.getH());
@@ -184,19 +189,20 @@ public class Astar implements SearchAlgorithm {
     }
     
     @Override
-    public int getIndex(int level) {
-      return heapIndex[level];
+    public void setSecondaryIndex(int key, int index) {
+    	secondaryIndex[key] = index;
     }
     
     @Override
-    public void setIndex(int level, int index) {
-      this.heapIndex[level] = index;
+    public int getSecondaryIndex(int key) {
+    	return secondaryIndex[key];
     }
     
     @Override
     public double getRank(int level) {
     	return (level == 0) ? f : g;
     }
+        
   }
   
   /*
