@@ -1,0 +1,350 @@
+package org.cs4j.core.domains.provisional;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+
+import edu.unh.ai.search.Domain;
+import edu.unh.ai.search.Edge;
+import edu.unh.ai.search.Edge.Undo;
+import edu.unh.ai.search.Heuristic;
+import edu.unh.ai.search.domains.pancakes.Pancakes.PancakeState;
+
+public class Pancakes implements Domain<PancakeState, Integer> {
+  
+  /*
+   * FIXME: Required by EES
+   */
+  private Heuristic<PancakeState> heuristic;
+  private Heuristic<PancakeState> hHat;
+  private Heuristic<PancakeState> dHat;
+  private COST_FUNCTION costFunction;
+  
+  public enum COST_FUNCTION {UNIT, HEAVY};
+  
+  private int numCakes = 0;
+  private int init[];
+  
+  public Pancakes(InputStream stream, COST_FUNCTION costFunction) {
+    this.costFunction = costFunction;
+    try {
+      BufferedReader reader = new BufferedReader(
+          new InputStreamReader(stream));
+      String line = reader.readLine();
+      numCakes = Integer.parseInt(line);
+      init = new int[numCakes];
+      line = reader.readLine();
+      String[] cakes = line.split(" ");
+      for (int i=0; i<cakes.length; i++) {
+        init[i] = Integer.parseInt(cakes[i]);
+      }
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+  }
+  
+  /*
+   * Pancake class.
+   */
+  public static final class PancakeState {    
+    
+    int numCakes, depth;
+    int[] cakes;
+    double h, h1, h2, g, d, sseH, sseD;
+    
+    PancakeState(PancakeState pancake) {
+      this.numCakes = pancake.numCakes;
+      this.cakes = new int[numCakes];
+      this.h = pancake.h;
+      this.h1 = pancake.h1;
+      this.h2 = pancake.h2;
+      this.d = pancake.d;
+      this.g = pancake.g;
+      this.depth = pancake.depth;
+      this.sseD = pancake.sseD;
+      this.sseH = pancake.sseH;
+      System.arraycopy(pancake.cakes, 0, cakes, 0, pancake.cakes.length);
+    }
+    
+    PancakeState(int numCakes) {
+      this.numCakes = numCakes;
+      cakes = new int[numCakes];
+    }
+    
+    @Override
+    public boolean equals(Object object) {
+      PancakeState pancake = (PancakeState)object;
+      for (int i = 0; i < numCakes; i++) {
+        if (cakes[i] != pancake.cakes[i])
+          return false;
+      }
+      return true;
+    }
+    
+    private void flip(int op) {
+      assert (op > 0);
+      assert (op < numCakes);
+      for (int n = 0; n <= op / 2; n++) {
+        int tmp = cakes[n];
+        cakes[n] = cakes[op - n];
+        cakes[op - n] = tmp;
+      }
+    }
+
+  }
+
+  @Override
+  public PancakeState initial() {
+    PancakeState s = new PancakeState(numCakes);
+    for (int i = 0; i < numCakes; i++)
+      s.cakes[i] = init[i];
+    s.h = ngaps(s.cakes, costFunction);
+    s.h1 = ngaps(s.cakes, costFunction);
+    s.d = ngaps(s.cakes, COST_FUNCTION.UNIT);
+    s.sseH = 0.0;
+    s.sseD = 0.0;
+    return s;
+  }
+  
+  private int ngaps(int cakes[], COST_FUNCTION costFunction) {
+    int gaps = 0;
+    for (int i = 0; i < numCakes; i++) {
+      if (gap(cakes, i)) {
+        switch(costFunction) {
+        case UNIT:
+          gaps++;
+          break;
+        case HEAVY:
+          int a = cakes[i];
+          int b = (i!=numCakes-1) ? cakes[i+1] : Integer.MAX_VALUE;
+          gaps += (1+Math.min(a, b));
+          break;
+        }
+      }
+    }
+    return gaps;
+  }
+  
+  // Is there a gap between cakes n and n+1?
+  private boolean gap(int cakes[], int n) {
+    if (n == numCakes-1)
+      return cakes[numCakes-1] != numCakes-1;
+    return Math.abs(cakes[n] - cakes[n+1]) != 1;
+  }
+
+  @Override
+  public double h(PancakeState state) {
+    return state.h;
+  }
+
+  @Override
+  public double hHat(PancakeState state) {
+    return (hHat == null)
+        ? state.h1
+        : hHat.compute(state);
+  }
+
+  @Override
+  public double dHat(PancakeState state) {
+    return (dHat == null)
+        ? state.d
+        : dHat.compute(state);
+  }
+
+  @Override
+  public double g(PancakeState state) {
+    return state.g;
+  }
+
+  @Override
+  public double d(PancakeState state) {
+    return state.d;
+  }
+
+  @Override
+  public int depth(PancakeState state) {
+    return state.depth;
+  }
+
+  @Override
+  public double sseH(PancakeState state) {
+    return state.sseH;
+  }
+  
+  @Override
+  public double sseD(PancakeState state) {
+    return state.sseD;
+  }  
+
+  @Override
+  public double h2(PancakeState state) {
+    throw new IllegalArgumentException();
+  }
+
+  @Override
+  public boolean isGoal(PancakeState state) {
+    return state.d == 0;
+  }
+
+  @Override
+  public int nops(PancakeState state) {
+    return numCakes - 1;
+  }
+
+  @Override
+  public Integer nthop(PancakeState state, int nth) {
+    return nth + 1;
+  }
+
+  @Override
+  public Edge<PancakeState, Integer> apply(PancakeState state, Integer op) {
+    double ph = state.h1;
+    double pd = state.d;
+    
+    PancakeUndo undo = new PancakeUndo(state, op);
+    double cost = cost(state.cakes[op]);
+    Edge<PancakeState, Integer> edge = 
+        new Edge<PancakeState, Integer>(cost, op, undo);
+    state.flip(op);
+    state.g += edge.cost;
+    state.h = ngaps(state.cakes, costFunction);
+    state.h1 = state.h; //ngaps(state.cakes, costFunction);
+    state.d = ngaps(state.cakes, COST_FUNCTION.UNIT);   
+    
+    if (hHat != null)
+      state.sseH += computeSSE(edge.cost, state.h1, ph, state.depth);
+    if (dHat != null)
+      state.sseD += computeSSE(1, state.d, pd, state.depth);
+  
+    return edge;
+  }
+  
+  private double cost(int op) {
+    double value = 1.0;
+    switch(costFunction) {
+    case HEAVY:
+      value = 1+op;
+      break;
+    }
+    return value;
+  }
+  
+  private double computeSSE(double ec, double ch, double ph, double depth) {
+    return (ec + ch) - ph;
+  }
+
+  @Override
+  public PancakeState copy(PancakeState state) {
+    return new PancakeState(state);
+  }
+
+  /* (non-Javadoc)
+   * @see edu.unh.ai.search.Domain#pack(java.lang.Object)
+   */
+  public long pack(PancakeState s) {
+    long word = 0;
+    for (int i = 0; i < numCakes; i++) {
+      word = (word << 4) | s.cakes[i];
+    }
+    return word;
+  }
+
+  /* (non-Javadoc)
+   * @see edu.unh.ai.search.Domain#unpack(long)
+   */
+  public PancakeState unpack(long word) {
+    PancakeState dst = new PancakeState(numCakes);
+    unpack(word, dst);
+    return dst;
+  }
+  
+  public PancakeState unpack(long word, double g, double d, int depth, double sseH, double sseD) {
+    PancakeState dst = new PancakeState(numCakes);
+    unpack(word, g, d, depth, sseH, sseD, dst);
+    return dst;
+  }
+  
+  public void unpack(long word, double g, double d, int depth, double sseH, double sseD, PancakeState dst) {
+    unpack(word, dst);
+    dst.g = g;
+    dst.d = d;
+    dst.depth = depth;
+    dst.sseH = sseH;
+    dst.sseD = sseD;
+  }
+  
+  public void unpack(long packed, double h, double g, double d, int depth, 
+      double sseH, double sseD, PancakeState state) {
+    unpack(packed, g, d, depth, sseH, sseD, state);
+  }
+  
+  public void unpack(long word, PancakeState dst) {
+    for (int i = numCakes - 1; i >= 0; i--) {
+      int t = (int) word & 0xF;
+      word >>= 4;
+      dst.cakes[i] = t;
+    }
+    dst.h1 = ngaps(dst.cakes, costFunction);
+    dst.h = (heuristic==null)?dst.h1:heuristic.compute(dst);
+  }
+  
+
+  @Override
+  public int getAbstraction(PancakeState state) {
+    return 0;
+  }
+
+  @Override
+  public int getAbstractionSize() {
+    return 0;
+  }
+
+  @Override
+  public void setHeuristic(Heuristic<PancakeState> heuristic) {
+    this.heuristic = heuristic;
+  }
+
+  @Override
+  public void setHHat(Heuristic<PancakeState> hHat) {
+    this.hHat = hHat;
+  }
+
+  @Override
+  public void setDHat(Heuristic<PancakeState> dHat) {
+    this.dHat = dHat;
+  }
+
+  @Override
+  public long pattern(PancakeState state, int pattern) {
+    return 0;
+  }  
+  
+  private class PancakeUndo implements Undo<PancakeState> {
+    private int op, depth;    
+    double h, h1, h2, g, d, sseH, sseD;
+    public PancakeUndo(PancakeState state, int op) {
+      this.op = op;
+      this.h = state.h;
+      this.h1 = state.h1;
+      this.h2 = state.h2;
+      this.g = state.g;
+      this.d = state.d;
+      this.depth = state.depth;
+      this.sseH = state.sseH;
+      this.sseD = state.sseD;
+    }
+    public void undo(PancakeState state) {
+      state.h = this.h;
+      state.h1 = this.h1;
+      state.h2 = this.h2;
+      state.g = this.g;
+      state.d = this.d;
+      state.depth = this.depth;
+      state.sseH = this.sseH;
+      state.sseD = this.sseD;
+      state.flip(op);
+    }
+  }
+  
+}

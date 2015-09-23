@@ -20,8 +20,6 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.util.ArrayList;
-import java.util.List;
 
 import org.cs4j.core.SearchDomain;
 
@@ -126,17 +124,6 @@ public final class FifteenPuzzle implements SearchDomain {
     return ((TileState)state).d == 0;
   }
   
-  public List<Operator> getOperators(State s) {
-  	TileState ts = (TileState)s;
-  	int nops = optab_n[ts.blank];
-  	List<Operator> list = new ArrayList<>(nops*2);
-  	for (int i=0; i<nops; i++) {
-  		Operator op = oplookup[optab_ops[ts.blank][i]];
-  		list.add(op);
-  	}
-    return list;
-  }
-  
   @Override
   public int getNumOperators(State state) {
     return optab_n[((TileState)state).blank];
@@ -159,28 +146,6 @@ public final class FifteenPuzzle implements SearchDomain {
     copy.d = ts.d;
     return copy;
   }  
-  
-  /*
-  @Override
-  public Edge<State, Operator> apply(State s, Operator op) {
-  	TileState ts = (TileState)s;
-  	FifteenPuzzleOperator fop = (FifteenPuzzleOperator)op;
-    int newb = (fop.value == -1) ? ts.blank : fop.value; 
-    TileUndo undo = new TileUndo(ts);
-    int tile = ts.tiles[newb];
-    Edge<State, Operator> edge = 
-        new EdgeImpl<State, Operator>(cost(tile), 
-        		FifteenPuzzleOperator.lookup[ts.blank], undo);
-    ts.tiles[ts.blank] = tile;
-    if (tile == 1) ts.one = ts.blank;
-    
-    ts.h += mdincr[tile][newb][ts.blank];
-    ts.d += mdincr_unit[tile][newb][ts.blank];
-    ts.blank = newb;
-     
-    return edge;
-  }
-  */
   
   @Override
   public State applyOperator(State s, Operator op) {

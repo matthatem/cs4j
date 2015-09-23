@@ -1,0 +1,1058 @@
+package org.cs4j.core.domains.provisional;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Vector;
+
+import edu.unh.ai.search.Domain;
+import edu.unh.ai.search.Edge;
+import edu.unh.ai.search.Edge.Undo;
+import edu.unh.ai.search.Heuristic;
+
+public class Vacuum implements Domain<Vacuum.VacuumState, Integer> {
+  
+  private int x0 = -1; 
+  private int y0 = -1; 
+  private int[] dirt;
+  private int[] rev = new int[8];
+  private Vector<Pair_int> dirtLocs = 
+      new Vector<Pair_int>();
+  private int maxDirt;
+ 
+  // UP, DOWN, LEFT, RIGHT - 0, 1, 2, 3
+  private static final int SUCK = 4;
+  private static final int NOP = -1;
+  private static final int NUM_MOVES = 4;
+
+  private GridMap map;
+  private boolean heavy = false;
+  private boolean pm = false;
+  
+  private Heuristic<VacuumState> dHat;
+  private Heuristic<VacuumState> hHat;
+  
+  private long loc_mask;
+  private long bit_mask;
+  private int loc_bits;
+  
+  private class GridMap {
+    int w, h, sz, nmvs;
+    char map[];
+    Move mvs[];
+    GridMap(int w, int h) {
+      this.w = w; 
+      this.h = h;
+      this.sz = this.w*this.h;
+      map = new char[sz];
+      
+      this.mvs = new Move[4];
+      this.nmvs = mvs.length;    
+      mvs[0] = new Move(this, 'S',  0,  1);
+      mvs[1] = new Move(this, 'N',  0, -1);
+      mvs[2] = new Move(this, 'W', -1,  0);
+      mvs[3] = new Move(this, 'E',  1,  0);
+    }
+    void block(int loc) {
+      map[loc] = '#';
+    }
+    boolean blocked(int loc) {
+      return map[loc] == '#';
+    }
+    int index(int x, int y) {
+      return y * w + x;
+    }
+    Pair_int pos(int loc) {
+      return new Pair_int(loc % w, loc / w);
+    }
+  }
+  
+  private class Move {
+    char id;
+    int dx, dy, delta;
+    Move(GridMap map, char id, int dx, int dy) {
+      this.id = id; 
+      this.dx = dx; 
+      this.dy = dy; 
+      this.delta = dx + map.w * dy;
+    }    
+  }
+  
+  private class Pair_int {
+    int first, second;
+    Pair_int(int first, int second) {
+      this.first = first; this.second = second;
+    }
+  }
+  
+  public class VacuumState {
+    double g, h, d, hHat, dHat, sseD, sseH;
+    int loc, ndirt, depth;
+    int dirt;
+    List<Integer> ops = null;
+    @Override
+    public boolean equals(Object obj) {
+      VacuumState o = (VacuumState)obj;
+      if (loc != o.loc || ndirt != o.ndirt)
+        return false;
+      if (dirt != o.dirt)
+          return false;      
+      return true;
+    }
+    boolean dirt(int i) {
+      // TODO: test!
+      return (dirt & (1<<i)) != 0;
+    }
+    void dirt(int i, boolean b) {
+      // TODO: test!
+      if (b)
+        dirt |= (1<<i);
+      else
+        dirt &= ~(1<<i);
+    }
+  }
+  
+  private boolean dirt(long dirt, int i) {
+    return (dirt & (1<<i)) != 0;
+  }
+  
+  public enum COST {HEAVY, LITE, UNIT};
+  public Vacuum(InputStream stream, COST cost, boolean pm) {
+    this.heavy = cost == COST.HEAVY;
+    this.pm = pm;
+        
+    BufferedReader in = new BufferedReader(
+        new InputStreamReader(stream));
+    
+    try {
+      String sz[] = in.readLine().trim().split(" ");
+      int w = Integer.parseInt(sz[0]);
+      int h = Integer.parseInt(sz[1]);
+      
+      in.readLine(); // Board:
+      
+      this.map = new GridMap(w, h);
+          
+      dirt = new int[map.sz];
+      for (int i=0; i<dirt.length; i++) 
+        dirt[i] = -1;      
+      
+      for (int y = 0; y < h; y++) {
+        String line = in.readLine();   
+        char[] chars = line.toCharArray();
+        int ci = 0;
+        for (int x = 0; x < w; x++) {
+          char c = chars[ci]; ci++;
+          switch (c) {
+          case '#':
+            map.block(map.index(x, y));
+            break;
+          case '*':
+            dirt[map.index(x, y)] = dirtLocs.size();
+            dirtLocs.add(new Pair_int(x, y));
+            break;
+          case '@':
+          case 'V':
+            x0 = x;
+            y0 = y;
+            break;
+          case '_':
+          case ' ':
+            break;
+          case '\n':
+            assert x == chars.length;
+            break;
+          default:
+            fatal("Unknow character"+c);
+          }
+        }
+      }
+      if (x0 < 0 || y0 < 0) {
+        fatal("No start location");
+      }
+    } catch(IOException e) {
+      e.printStackTrace();
+      fatal("Error reading input file");
+    }
+    
+    maxDirt = dirtLocs.size(); 
+    
+    // compute bit masks for bit twiddling states in pack/unpack
+    loc_bits = (int) Math.ceil(log2(map.sz));
+    loc_mask = mask(loc_bits);
+    bit_mask = mask(1);
+    int reqbits = loc_bits + maxDirt;
+    if (reqbits > 64) {
+      System.err.println("Too many bits required: "+reqbits);
+      System.exit(1);
+    }
+        
+    reverseops();
+    precomputeMST_heavy();
+  }
+  
+  class MSTNode {
+    MSTNode p;
+    int id, rank;
+    MSTNode(int id) {
+      this.id = id;
+      this.p = this; this.rank = 0;
+    }
+    void union(MSTNode y) {
+      link(findset(this), findset(y));
+    }
+    void link(MSTNode x, MSTNode y) {
+      if (x.rank > y.rank) {
+        y.p = x;
+      }
+      else {
+        x.p = y;
+        if (x.rank == y.rank)
+          y.rank++;
+      }
+    }
+    MSTNode findset(MSTNode x) {
+      if (x != x.p)
+        return findset(x.p);
+      return x.p;
+    }
+    void reset() {
+      this.p = this;
+      this.rank = 0;
+    }
+  }
+  
+  class MSTEdge implements Comparable<MSTEdge> {
+    MSTNode u, v;
+    int weight;
+    MSTEdge(MSTNode u, MSTNode v, int weight) {
+      this.u = u; this.v = v; this.weight = weight;
+    }
+    @Override
+    public int compareTo(MSTEdge that) {
+      return this.weight - that.weight;
+    }
+  }
+  
+  private List<MSTEdge> computeMST(VacuumState s) {
+    
+    MSTNode nodes[] = new MSTNode[dirtLocs.size()+1];
+    for (int i=0; i<nodes.length; i++) 
+      nodes[i] = new MSTNode(i);
+    
+    List<MSTEdge>mstEdges = new ArrayList<MSTEdge>();
+    for (int u=0; u<dirtLocs.size()+1; u++) {
+      Pair_int xy = (u<dirtLocs.size()) ? dirtLocs.get(u) : map.pos(s.loc);
+      int v = (u<dirtLocs.size()) ? u+1 : 0;
+      for (; v<dirtLocs.size(); v++) {
+        Pair_int ij = dirtLocs.get(v);
+        int x_dist = Math.abs(xy.first - ij.first);
+        int y_dist = Math.abs(xy.second - ij.second);      
+        int weight = x_dist+y_dist;
+        MSTEdge edge = new MSTEdge(nodes[u], nodes[v], weight);
+        mstEdges.add(edge);
+      }
+    }
+    Collections.sort(mstEdges);
+    return mstEdges;
+  }
+  
+  private List<MSTEdge> computeMST() {
+    
+    MSTNode nodes[] = new MSTNode[dirtLocs.size()];
+    for (int i=0; i<nodes.length; i++) 
+      nodes[i] = new MSTNode(i);
+    
+    List<MSTEdge>mstEdges = new ArrayList<MSTEdge>();
+    for (int u=0; u<dirtLocs.size(); u++) {
+      Pair_int xy = dirtLocs.get(u);
+      for (int v = u+1; v<dirtLocs.size(); v++) {
+        Pair_int ij = dirtLocs.get(v);
+        int x_dist = Math.abs(xy.first - ij.first);
+        int y_dist = Math.abs(xy.second - ij.second);      
+        int weight = x_dist+y_dist;
+        MSTEdge edge = new MSTEdge(nodes[u], nodes[v], weight);
+        mstEdges.add(edge);
+      }
+    }
+    Collections.sort(mstEdges);
+    return mstEdges;
+  }
+  
+  double [][] lookupMST_heavy;
+  private void precomputeMST_heavy() {
+    int perm = (int)Math.pow(2, maxDirt);
+    lookupMST_heavy = new double[perm][2];
+    lookupMST_heavy[0] = new double[] {0, 0};
+    for (int i=1; i<perm; i++) {
+      double[] hd = computeHD_MST(i);
+      lookupMST_heavy[i] = hd;
+    }
+  }
+  
+  private double[] computeHD_MST(int dirt) {
+    
+    MSTNode nodes[] = new MSTNode[dirtLocs.size()];
+    for (int i=0; i<nodes.length; i++) 
+      nodes[i] = new MSTNode(i);
+    
+    int remainingDirt = 0;
+    for (int u=0; u<dirtLocs.size(); u++) {
+      if (dirt(dirt, u))
+        remainingDirt++;
+    }
+    
+    List<MSTEdge>mstEdges = new ArrayList<MSTEdge>();
+    for (int u=0; u<dirtLocs.size(); u++) {
+      if (!dirt(dirt, u)) continue;
+      for (int v = u+1; v<dirtLocs.size(); v++) {
+        if (!dirt(dirt, v)) continue;
+        Pair_int xy = dirtLocs.get(u);
+        Pair_int ij = dirtLocs.get(v);
+        int x_dist = Math.abs(xy.first - ij.first);
+        int y_dist = Math.abs(xy.second - ij.second);      
+        int weight = x_dist+y_dist;
+        MSTEdge edge = new MSTEdge(nodes[u], nodes[v], weight);
+        mstEdges.add(edge);
+      }
+    }
+    Collections.sort(mstEdges);
+    
+    if (remainingDirt < 2) {
+      return new double[] {0, 0};
+    }
+        
+    MSTEdge mst[] = new MSTEdge[remainingDirt-1];
+    int j = mst.length-1;
+    for (int i=0; i<mstEdges.size(); i++) {
+      MSTEdge e = mstEdges.get(i);
+      if (e.u.findset(e.u) == e.v.findset(e.v)) 
+        continue;
+      mst[j] = e;
+      e.u.union(e.v);
+      j--;
+    }
+    
+    // DEBUG verify the tree
+    /*int setId = -1;
+    for (MSTEdge e : mst) {
+      if (setId == -1) {
+        setId = e.u.findset(e.u).id;       
+      }
+      assert e.u.findset(e.u).id == setId;
+      assert e.v.findset(e.v).id == setId;
+    }*/
+    
+    // scan mst edges in decreasing order
+    double h = 0.0d; 
+    double d = 0.0d;
+    
+    // remaining dirt - subtract 1 for robot to travel to first dirt
+    int ndirt = (maxDirt-(remainingDirt)) + 1; 
+    double robot = (heavy) ? (heavy(ndirt)+1.0d) : 1.0d;
+    for (int i=0; i<mst.length; i++) {
+      h += mst[i].weight*robot; // to move
+      h += robot;               // to vacuum dirt
+      d += mst[i].weight;       // to move      
+      d += 1;                   // to vacuum
+      ndirt++;
+      robot = (heavy) ? heavy(ndirt)+1.0d : 1.0d;
+    }
+    
+    return new double[]{h, d};
+  }
+  
+  private double log2(int x) {
+    return Math.log(x)/Math.log(2);
+  }
+  
+  private void reverseops() {
+    int nrev = 0;
+    for (int i = 0; i < map.nmvs; i++) {
+      for (int j = 0; j < map.nmvs; j++) {
+        if (map.mvs[i].dx != -map.mvs[j].dx || 
+            map.mvs[i].dy != -map.mvs[j].dy)
+          continue;
+        rev[i] = j;
+        nrev++;
+        break;
+      } 
+    }
+    assert (nrev == map.nmvs);
+  }
+  
+  private void fatal(String msg) {
+    System.err.println(msg);
+    System.exit(1);
+  }
+  
+  private double[] computeHD(VacuumState s) {
+    if (heavy)
+      return computeHD_jordan(s);
+    else
+      return computeHD_greedy(s);
+  }
+
+  private double[] computeHD_jordan(VacuumState s) {
+    if (s.ndirt == 0) {
+      return new double[]{0.0d,0.0d};
+    }
+    
+    double h = computeHD_chris_fast(s)[0];
+    //double h = computeHD_chris(s)[0];
+    double d = computeHD_greedy(s)[1];
+    return new double[]{h, d};
+    
+    //return computeHD_mst(s);
+  }
+  
+  private double[] computeHD_chris(VacuumState s) {
+    if (s.ndirt == 0) {
+      return new double[]{0.0d, 0.0d};
+    }
+    
+    double h = 0.0d; 
+    double d = 0.0d;    
+    
+    // build mst of remaining dirt and robot
+    List<MSTEdge> mstEdges = computeMST();
+    MSTEdge mst[] = new MSTEdge[s.ndirt-1];
+    int j = mst.length-1;
+    for (int i=0; i<mstEdges.size(); i++) {
+      MSTEdge e = mstEdges.get(i);
+      if ((e.u.id < maxDirt && !s.dirt(e.u.id)) || 
+          (e.v.id < maxDirt && !s.dirt(e.v.id)))
+        continue;
+      if (e.u.findset(e.u) == e.v.findset(e.v)) 
+        continue;
+      mst[j] = e;
+      e.u.union(e.v);
+      j--;
+    }
+    
+    // DEBUG verify the tree
+    /*int setId = -1;
+    for (MSTEdge e : mst) {
+      if (setId == -1) {
+        setId = e.u.findset(e.u).id;       
+      }
+      assert e.u.findset(e.u).id == setId;
+      assert e.v.findset(e.v).id == setId;
+    }*/
+    
+    // scan mst edges in decreasing order
+    int ndirt = (maxDirt-s.ndirt) + 1; // remaining dirt
+    double robot = (heavy) ? (heavy(ndirt)+1.0d) : 1.0d;
+    for (int i=0; i<mst.length; i++) {
+      h += mst[i].weight*robot; // to move
+      h += robot;               // to vacuum dirt
+      d += mst[i].weight;       // to move      
+      d += 1;                   // to vacuum
+      ndirt++;
+      robot = (heavy) ? heavy(ndirt)+1.0d : 1.0d;
+    }
+    
+    // now include edge for shortest dirt to robot
+    {
+      int min_dist = Integer.MAX_VALUE;
+      Pair_int xy = map.pos(s.loc);
+      for (int n=0; n < maxDirt; n++) {
+        if (!s.dirt(n)) continue;
+        Pair_int ij = dirtLocs.get(n);
+        int x_dist = Math.abs(xy.first - ij.first);
+        int y_dist = Math.abs(xy.second - ij.second);      
+        int dist = x_dist+y_dist;
+        if (dist < min_dist) {
+          min_dist = dist;
+        }        
+      }
+      robot = (heavy) ? (heavy(s)+1.0d) : 1.0d;
+      h += min_dist*robot;
+      h += 1;
+      d += min_dist;
+      d += 1;
+    }
+    
+    return new double[]{h, d};
+  }
+  
+  private double[] computeHD_chris_fast(VacuumState s) {
+    if (s.ndirt == 0) {
+      return new double[]{0.0d, 0.0d};
+    }
+        
+    double[] hd = lookupMST_heavy[s.dirt];
+    double h = hd[0]; 
+    double d = hd[1];
+    
+    // now include edge for shortest dirt to robot
+    {
+      int min_dist = Integer.MAX_VALUE;
+      Pair_int xy = map.pos(s.loc);
+      for (int n=0; n < maxDirt; n++) {
+        if (!s.dirt(n)) continue;
+        Pair_int ij = dirtLocs.get(n);
+        int x_dist = Math.abs(xy.first - ij.first);
+        int y_dist = Math.abs(xy.second - ij.second);      
+        int dist = x_dist+y_dist;
+        if (dist < min_dist) {
+          min_dist = dist;
+        }        
+      }
+      double robot = (heavy) ? (heavy(s)+1.0d) : 1.0d;
+      h += min_dist*robot;
+      h += 1;
+      d += min_dist;
+      d += 1;
+    }
+    
+    return new double[]{h, d};
+  }
+  
+  private double heavy(int ndirt) {
+    return ((double)ndirt);
+  }
+  
+  private double[] computeHD_mst(VacuumState s) {
+    if (s.ndirt == 0) {
+      return new double[]{0.0d, 0.0d};
+    }
+    
+    double h = 0.0d; 
+    double d = 0.0d;    
+    
+    // build mst of remaining dirt and robot
+    List<MSTEdge> mstEdges = computeMST(s);
+    MSTEdge mst[] = new MSTEdge[s.ndirt];
+    int j = mst.length-1;
+    for (int i=0; i<mstEdges.size(); i++) {
+      MSTEdge e = mstEdges.get(i);
+      if ((e.u.id < maxDirt && !s.dirt(e.u.id)) || 
+          (e.v.id < maxDirt && !s.dirt(e.v.id)))
+        continue;
+      if (e.u.findset(e.u) == e.v.findset(e.v)) 
+        continue;
+      mst[j] = e;
+      e.u.union(e.v);
+      j--;
+    }
+    
+    // DEBUG verify the tree
+    /*int setId = -1;
+    for (MSTEdge e : mst) {
+      if (setId == -1) {
+        setId = e.u.findset(e.u).id;       
+      }
+      assert e.u.findset(e.u).id == setId;
+      assert e.v.findset(e.v).id == setId;
+    }*/
+    
+    // scan mst edges in decreasing order
+    int ndirt = maxDirt-s.ndirt; // remaining dirt
+    double robot = (heavy) ? (heavy(ndirt)+1.0d) : 1.0d;
+    for (int i=0; i<mst.length; i++) {
+      h += mst[i].weight*robot; // to move
+      h += robot;               // to vacuum dirt
+      d += mst[i].weight;       // to move
+      d += 1;                   // to vacuum
+      ndirt++;
+      robot = (heavy) ? heavy(ndirt)+1.0d : 1.0d;
+    }
+    
+    return new double[]{h, d};
+  }
+  
+  private double[] computeHD_greedy(VacuumState s) {
+    if (s.ndirt == 0) {
+      return new double[]{0.0d,0.0d};
+    }
+            
+    double h = 0.0d;
+    double d = 0.0d;
+    
+    int min_dirt = -1;
+    int min_dist = Integer.MAX_VALUE;
+    
+    // find dirt closest to robot
+    {
+      Pair_int xy = map.pos(s.loc);
+      for (int n=0; n < maxDirt; n++) {
+        if (!s.dirt(n)) continue;
+        Pair_int ij = dirtLocs.get(n);
+        int x_dist = Math.abs(xy.first - ij.first);
+        int y_dist = Math.abs(xy.second - ij.second);      
+        int dist = x_dist+y_dist;
+        if (dist < min_dist) {
+          min_dist = dist;
+          min_dirt = n;
+        }
+      }
+    }
+    
+    int ndirt = maxDirt-s.ndirt;
+    double robot = heavy(ndirt)+1.0d;
+    
+    h += min_dist*robot;
+    h += robot;
+    d += min_dist;
+    d += 1;
+    
+    ndirt++;
+    
+    // sum the greedy traversal of remaining dirt
+    boolean used[] = new boolean[maxDirt];
+
+    for (int rem = s.ndirt-1; rem > 0; rem--) {
+      assert (s.dirt(min_dirt));
+      used[min_dirt] = true;
+      min_dist = Integer.MAX_VALUE;
+      int next_min_dirt = -1;
+      Pair_int xy = dirtLocs.get(min_dirt);
+      for (int n=0; n<maxDirt; n++) {
+        if (used[n] || !s.dirt(n)) continue;
+        Pair_int ij = dirtLocs.get(n);
+        int x_dist = Math.abs(xy.first - ij.first);
+        int y_dist = Math.abs(xy.second - ij.second); 
+        int dist = x_dist+y_dist;
+        if (dist < min_dist) {
+          min_dist = dist;
+          next_min_dirt = n;
+        }
+      }
+      min_dirt = next_min_dirt;
+      
+      robot = heavy(ndirt)+1.0d;
+      h += min_dist*robot;
+      h += robot;
+      d += min_dist;
+      d += 1;
+      
+      ndirt++;
+    }
+    
+    if (heavy) 
+      return new double[]{h, d};
+    else
+      return new double[]{d, d};
+  }
+  
+  private double[] computeHD_ethan(VacuumState s) {    
+    if (s.ndirt == 0) {
+      return new double[]{0.0d, 0.0d};
+    }
+   
+    int i = 0;
+    for (; i < maxDirt && !s.dirt(i); i++);    
+
+    int minx = dirtLocs.get(i).first;
+    int maxx = minx;
+    int miny = dirtLocs.get(i).second;
+    int maxy = miny;
+
+    for (i++; i < maxDirt; i++) {
+      if (!s.dirt(i))
+        continue;
+      int x = dirtLocs.get(i).first, y = dirtLocs.get(i).second;
+      if (x < minx)
+        minx = x;
+      if (x > maxx)
+        maxx = x;
+      if (y < miny)
+        miny = y;
+      if (y > maxy)
+        maxy = y;
+    }
+
+    double sum = s.ndirt + (maxx-minx) + (maxy-miny);    
+    return new double[]{sum, sum};
+  }
+  
+  private double[] computeHD_ocaml(VacuumState s) {    
+    if (s.ndirt == 0) {
+      return new double[]{0.0d, 0.0d};
+    }
+        
+    Pair_int xy = map.pos(s.loc);
+    int x = xy.first; int y = xy.second;
+    double above = 0, below = 0, left = 0, right = 0;
+    for (int n=0; n < maxDirt; n++) {
+      if (!s.dirt(n))
+        continue;
+      
+      Pair_int ij = dirtLocs.get(n);
+      int i = ij.first; int j = ij.second;
+      int x_disp = Math.abs(x - i);
+      int y_disp = Math.abs(y - j);      
+      
+      if (j < y) {
+        //above
+        if (above < y_disp) {
+          above = y_disp;
+        }
+      }
+      else {
+        //below
+        if (below < y_disp) {
+          below = y_disp;
+        }
+      }
+      if (i < x) {
+        // left
+        if (left < x_disp) {
+          left = x_disp;
+        }
+      }
+      else { 
+        // right
+        if (right < x_disp) {
+          right = x_disp;
+        }
+      }
+    }
+
+    double sum = above + below + left + right + s.ndirt;    
+    return new double[]{sum, sum};
+  }
+  
+  private void initOps(VacuumState s) {
+    s.ops = new ArrayList<Integer>();
+
+    int dirt = this.dirt[s.loc];
+    if (dirt >= 0 && s.dirt(dirt)) {
+      s.ops.add(SUCK);
+    }
+    else {
+      for (int i = 0; i < NUM_MOVES; i++) {
+        if (okMove(s.loc, map.mvs[i]))
+          s.ops.add(i);
+      }
+    }
+    
+  }
+  
+  private double heavy(VacuumState s) {
+    return heavy(maxDirt-s.ndirt);
+  }
+  
+  private boolean okMove(int loc, Move mv) {
+    int nxt = loc + mv.delta;
+    if (nxt < 0 || nxt >= map.sz || map.blocked(nxt)) {
+      return false;
+    }
+    return true;   
+  }
+  
+  @Override
+  public VacuumState initial() {
+    VacuumState s = new VacuumState();
+    s.loc = map.index(x0, y0);
+    s.ndirt = maxDirt;
+    for (int i=0; i<maxDirt; i++)
+      s.dirt(i, true);
+    
+    double hd[] = computeHD(s);
+    s.h = hd[0];
+    s.d = hd[1];
+    
+    if (hHat != null)
+      s.hHat = hHat.compute(s);
+    if (dHat != null)
+      s.dHat = dHat.compute(s);
+    return s;
+  }
+
+  @Override
+  public double h(VacuumState state) {
+    return state.h;
+  }
+
+  @Override
+  public double hHat(VacuumState state) {
+    return (hHat == null)
+        ? state.h
+        : hHat.compute(state);
+  }
+
+  @Override
+  public double dHat(VacuumState state) {
+    return (dHat == null)
+        ? state.d
+        : dHat.compute(state);
+  }
+
+  @Override
+  public double g(VacuumState state) {
+    return state.g;
+  }
+
+  @Override
+  public double d(VacuumState state) {
+    return state.d;
+  }
+
+  @Override
+  public int depth(VacuumState state) {
+    return state.depth;
+  }
+
+  @Override
+  public double sseH(VacuumState state) {
+    return state.sseH;
+  }
+
+  @Override
+  public double sseD(VacuumState state) {
+    return state.sseD;
+  }
+
+  @Override
+  public double h2(VacuumState state) {
+    return state.h;
+  }
+
+  @Override
+  public boolean isGoal(VacuumState state) {
+    return state.ndirt == 0;
+  }
+
+  @Override
+  public int nops(VacuumState state) {
+    if (state.ops == null) 
+      initOps(state);
+    
+    assert state.ops.size() < 6;
+    
+    return state.ops.size();
+  }
+
+  @Override
+  public Integer nthop(VacuumState state, int nth) {
+    if (state.ops == null) 
+      initOps(state);
+    return state.ops.get(nth);
+  }
+
+  @Override
+  public Edge<VacuumState, Integer> apply(VacuumState s, Integer op) {
+    double pg = s.g;
+    double ph = s.h;
+    double pd = s.d;
+    
+    /*System.out.println("h: "+ph+"  d: "+pd+"  f: "+(s.g+s.h)+
+        "  g: "+s.g+"  ndirt: "+s.ndirt+
+        "  hHat: "+hHat(s)+"  s.dHat: "+dHat(s));*/
+        
+    VacuumUndo undo = new VacuumUndo(s);
+    int revop = NOP;
+    
+    double cost = 1.0d;
+    
+    if (heavy) {
+      cost += heavy(s);
+    }
+    
+    if (op == SUCK) {
+      int dirt = this.dirt[s.loc];
+      assert (dirt >= 0);
+      assert (dirt < maxDirt);
+      assert (s.dirt(dirt));      
+      s.dirt(dirt, false);
+      s.ndirt--;
+    }
+    else {
+      assert (op >= 0);
+      assert (op <= 3);
+      revop = rev[op];
+      s.loc += map.mvs[op].delta;
+    }
+    
+    s.depth++;
+    s.g += cost;
+    double hd[] = computeHD(s);
+    s.h = hd[0];
+    s.d = hd[1];
+    
+    // pathmax
+    if (pm && s.ndirt != 0) {
+      double tcost = s.g-pg;
+      s.h = Math.max(s.h, (ph-tcost));
+    }
+    
+    if (hHat != null)
+      s.sseH += computeSSE(cost, s.h, ph);
+    if (dHat != null)
+      s.sseD += computeSSE(1, s.d, pd);
+    
+    s.ops = null;
+    
+    return new Edge<VacuumState, Integer>(cost, revop, undo);
+  }
+  
+  private double computeSSE(double ec, double ch, double ph) {
+    return (ec + ch) - ph;   
+  }
+
+  @Override
+  public VacuumState copy(VacuumState state) {
+    VacuumState copy = new VacuumState();
+    copy(state, copy);
+    return copy;
+  }
+  
+  private void copy(VacuumState state, VacuumState copy) {
+    copy.g = state.g;
+    copy.h = state.h;
+    copy.d = state.d;
+    copy.depth = state.depth;
+    
+    copy.hHat = state.hHat;
+    copy.dHat = state.dHat;
+    copy.sseD = state.sseD;
+    copy.sseH = state.sseH;
+    
+    copy.loc = state.loc;
+    copy.ndirt = state.ndirt;
+    copy.dirt = state.dirt;
+  }
+
+  private long mask(int bits) {
+    return ~((~0) << bits);
+  }
+  
+  @Override
+  public long pack(VacuumState state) {
+    long packed = 0L;    
+    // pack the location of the robot
+    packed |= state.loc & loc_mask;    
+    // pack 1 bit for each remaining dirt
+    for (int i=0; i<maxDirt; i++) {
+      packed <<= 1;
+      if (state.dirt(i)) {
+        packed |= 1 & bit_mask;
+      }
+    }    
+    
+    /*VacuumState test = unpack(packed);
+    assert(test.equals(state));*/
+    
+    return packed;
+  }
+
+  @Override
+  public VacuumState unpack(long packed) {
+    VacuumState dst = new VacuumState();
+    unpack(packed, dst);
+    return dst;
+  }
+
+  @Override
+  public VacuumState unpack(long packed, double g, double d, int depth,
+      double sseH, double sseD) {
+    VacuumState dst = new VacuumState();
+    unpack(packed, g, d, depth, sseH, sseD, dst);
+    return dst;
+  }
+    
+  private void unpackLite(long packed, VacuumState state) {
+    // unpack the dirt
+    state.ops = null;
+    int ndirt = maxDirt;
+    state.ndirt = 0;
+    state.dirt = 0;
+    for (int i=ndirt-1; i>=0; i--) {
+      long d = packed & bit_mask;
+      if (d == 1) {
+        state.dirt(i, true);
+        state.ndirt++;
+      }
+      else {
+        state.dirt(i, false);
+      }
+      packed >>= 1;
+    }
+    // unpack the robot loc
+    state.loc = (int) (packed & loc_mask);
+  }
+  
+  @Override
+  public void unpack(long packed, VacuumState state) {
+    unpackLite(packed, state);    
+    double hd[] = computeHD(state);
+    state.h = hd[0];
+    state.d = hd[1];
+  }
+
+  @Override
+  public void unpack(long packed, double g, double d, int depth,
+      double sseH, double sseD, VacuumState state) {
+    unpack(packed, state);
+    state.g = g;
+    state.depth = (int)depth;
+    state.sseH = sseH;
+    state.sseD = sseD;
+  }
+  
+  public void unpack(long packed, double h, double g, double d, int depth,
+      double sseH, double sseD, VacuumState state) {
+    unpackLite(packed, state);
+    state.g = g;
+    state.h = h;
+    state.d = d;
+    state.depth = (int)depth;
+    state.sseH = sseH;
+    state.sseD = sseD;
+  }
+
+  @Override
+  public int getAbstraction(VacuumState state) {
+    // TODO Auto-generated method stub
+    return 0;
+  }
+
+  @Override
+  public int getAbstractionSize() {
+    // TODO Auto-generated method stub
+    return 0;
+  }
+
+  @Override
+  public void setHeuristic(Heuristic<VacuumState> heuristic) {
+    // do nothing, need to deprecate this    
+  }
+
+  @Override
+  public void setHHat(Heuristic<VacuumState> hHat) {
+    this.hHat = hHat;
+  }
+
+  @Override
+  public void setDHat(Heuristic<VacuumState> dHat) {
+    this.dHat = dHat;
+  }
+
+  @Override
+  public long pattern(VacuumState state, int pattern) {
+    // do nothing
+    return -1;
+  }
+  
+  private class VacuumUndo implements Undo<VacuumState> {
+    VacuumState copy;
+    List<Integer> ops;
+    VacuumUndo(VacuumState s) {
+      copy = copy(s);
+      ops = s.ops;
+    }
+    
+    @Override
+    public void undo(VacuumState state) {
+      copy(copy, state);
+      state.ops = ops;
+    }    
+  }
+
+}

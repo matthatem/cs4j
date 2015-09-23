@@ -1,0 +1,1088 @@
+package org.cs4j.core.domains.provisional;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Vector;
+
+import edu.unh.ai.search.Domain;
+import edu.unh.ai.search.Edge;
+import edu.unh.ai.search.Edge.Undo;
+import edu.unh.ai.search.Heuristic;
+import edu.unh.ai.search.domains.drobot.DRobot.DRobotState;
+
+/*
+ * DockyardRobot domain
+ */
+
+public class DRobot implements Domain<DRobotState, DRobot.Oper> {
+  
+  private Heuristic<DRobotState> hHat;
+  private Heuristic<DRobotState> dHat;
+  
+  private Loc[] initlocs;
+  private int[] goal, maxpiles, maxcranes;
+  private double[][] adj;
+  private int nlocs, nboxes, ncranes, npiles;;
+  double[][] shortest;
+  
+  private long loc_mask;
+  private long pos_mask;
+  private int loc_bits;
+  private int pos_bits;
+  
+  //LoadCost is the cost of loading and unloading the robot.
+  //private static final double LoadCost = 0.01;
+  //private static final double LoadCost = 0.01d;
+  private static final double LoadCost = 1d;
+  
+  //PopCostFact is the cost of poping from a stack, given as a
+  //factor of the stack's height.
+  //private static final double PopCostFact = 0.05d;
+  private static final double PopCostFact = 5d;
+  
+  public static final class Oper {
+    private static final int NONE = 0;
+    private static final int PUSH = 1;
+    private static final int POP = 2;
+    private static final int LOAD = 3;
+    private static final int UNLOAD = 4;
+    private static final int MOVE = 5;
+    private int type = NONE, x = 0, y = 0;
+    private Oper(int type) {
+      this.type = type;      
+    }
+    private Oper(int type, int x) {
+     this.type = type;
+     this.x = x;
+    }
+    private Oper(int type, int x, int y) {
+      this.type = type;
+      this.x = x;
+      this.y = y;
+    }
+    @Override
+    public boolean equals(Object obj) {
+      if (obj == null) return false;
+      Oper o = (Oper)obj;
+      return type == o.type && x == o.x && y == o.y;
+    }    
+  }
+  
+  private static final class Pile implements Comparable<Pile> {
+    Vector<Integer> stack;
+    private Pile() {
+      stack = new Vector<Integer>();
+    }
+    private Pile(int bucket) {
+      stack = new Vector<Integer>();
+      stack.add(bucket);
+    }    
+    @Override
+    public int compareTo(Pile o) {
+      return stack.get(0) - o.stack.get(0);
+    }
+    @Override
+    public boolean equals(Object obj) {
+      Pile o = (Pile)obj;
+      return stack.equals(o.stack);
+    }
+    private Pile copy() {
+      Pile copy = new Pile();
+      for (int i=0; i<stack.size(); i++)
+        copy.stack.add(stack.get(i).intValue());
+      return copy;
+    }
+  }
+  
+  private static final class Loc {
+    Vector<Integer> cranes;
+    Vector<Pile> piles;
+    private Loc() {
+      cranes = new Vector<Integer>();
+      piles = new Vector<Pile>();
+    }
+    private Loc(int c, int p) {
+      cranes = new Vector<Integer>(c);
+      piles = new Vector<Pile>(p);
+    }
+    private Loc copy() {
+      Loc copy = new Loc(cranes.size(), piles.size());      
+      for (int i=0; i<cranes.size(); i++)
+        copy.cranes.add(i, cranes.get(i).intValue());      
+      for (int i=0; i<piles.size(); i++)
+        copy.piles.add(i, piles.get(i).copy());
+      return copy; 
+    }
+    
+    @Override
+    public boolean equals(Object obj) {
+      Loc o = (Loc)obj;
+      return cranes.equals(o.cranes) && piles.equals(o.piles);
+    } 
+    
+    private int pop(int p) {
+      Pile pile = piles.get(p);
+      int box = pile.stack.remove(pile.stack.size()-1);
+      if (pile.stack.isEmpty()) {        
+        piles.remove(p);
+      }
+
+      return box;
+    }
+    
+    private void push(int box, int p) {
+      if (p >= piles.size()) {
+        piles.add(new Pile(box));
+        Collections.sort(piles);  //TODO: is this sorting properly
+      } else {
+        piles.get(p).stack.add(box);
+      }
+    }
+    
+    private int rmcrane(int c) {
+      int box = cranes.get(c);
+      cranes.remove(c);
+      return box;
+    }
+    
+    private void addcrane(int box) {
+      cranes.add(box);
+      Collections.sort(cranes);  //TODO: is this sorting properly
+    }
+    
+    private int findpile(int box) {
+      int l = 0, u = piles.size();
+      if (u == 0)
+        return -1;
+
+      // define: piles[-1] and piles[piles.size]
+      // invariant: l - 1 < box and u box
+      while (l < u) {
+        int m = ((u - l) >> 1) + l;
+        if (piles.get(m).stack.get(0) < box)
+          l = m + 1;  // l - 1 < box
+        else
+          u = m;  // u >= box
+      }
+      return (l < piles.size() && piles.get(l).stack.get(0) == box) ? l : -1;
+    }
+    
+    private int findcrane(int box) {
+      int l = 0, u = cranes.size();
+      if (u == 0)
+        return -1;
+
+      while (l < u) {
+        int m = ((u - l) >> 1) + l;
+        if (cranes.get(m) < box)
+          l = m + 1;
+        else
+          u = m;
+      }
+      return (l < cranes.size() && cranes.get(l) == box) ? l : -1;
+    }
+  }
+  
+  private void initOps(DRobotState s) {
+    Vector<Oper> ops = new Vector<Oper>();
+    Loc l = s.locs[s.rloc];
+
+    // Push cranes onto piles.
+    int lastpile = l.piles.size();
+    if (lastpile >= maxpiles[s.rloc])
+      lastpile = maxpiles[s.rloc] - 1;
+    for (int c = 0; c < l.cranes.size(); c++) {
+      for (int p = 0; p <= lastpile; p++)
+        ops.add(new Oper(Oper.PUSH, c, p));
+    }
+
+    if (l.cranes.size() < maxcranes[s.rloc]) {  // empty cranes?
+      // Pop piles onto a crane
+      for (int p = 0; p < l.piles.size(); p++)
+        ops.add(new Oper(Oper.POP, p));
+      // Unload the robot
+      if (s.rbox >= 0)
+        ops.add(new Oper(Oper.UNLOAD));  
+    }
+
+    // Load the robot
+    if (s.rbox < 0) {
+      for (int c = 0; c < l.cranes.size(); c++)
+        ops.add(new Oper(Oper.LOAD, c));
+    }
+
+    // Move the robot
+    for (int i = 0; i < nlocs; i++) {
+      if (i == s.rloc)
+        continue;
+      ops.add(new Oper(Oper.MOVE, i));
+    }
+    s.ops = ops.toArray(new Oper[ops.size()]);
+  }
+  
+  public static final class DRobotState {
+    double h, h1, h2, g, d, sseH, sseD;
+    int rbox, rloc, nleft, depth;
+    Loc[] locs;
+    int[] boxlocs;
+    Oper[] ops = null;
+    
+    public DRobotState() {
+    } 
+    
+    public DRobotState(DRobot dr, Loc[] ls, int rb, int rl) {
+      init(dr, ls, rb, rl);
+    }
+    
+    public void init(DRobot dr, Loc[] ls, int rb, int rl) {
+      locs = new Loc[ls.length];
+      System.arraycopy(ls, 0, locs, 0, ls.length);
+      rbox = rb;
+      rloc = rl;
+      h = -1;
+      h1 = -1;
+      h2 = -1;
+      d = -1;
+      nleft = 0;      
+      boxlocs = new int[dr.nboxes];
+            
+      for (int l = 0; l < locs.length; l++) {
+        for (int c = 0; c < locs[l].cranes.size(); c++) {
+          int box = locs[l].cranes.get(c);
+          if (dr.goal[box] >= 0 && dr.goal[box] != l)
+            nleft++;
+          boxlocs[box] = l;
+        }
+        for (int p = 0; p < locs[l].piles.size(); p++) {
+          for (int s = 0; s < locs[l].piles.get(p).stack.size(); s++) {
+            int box = locs[l].piles.get(p).stack.get(s);
+            if (dr.goal[box] >= 0 && dr.goal[box] != l)
+              nleft++;
+            boxlocs[box] = l;
+          }
+        }
+      }
+      if (rbox >= 0) {
+        if (dr.goal[rbox] >= 0 && dr.goal[rbox] != rloc)
+          nleft++;
+        boxlocs[rbox] = rloc;
+      }
+    }
+    
+    public DRobotState(DRobotState state) {
+      h = state.h;
+      h1 = state.h1;
+      h2 = state.h2;
+      g = state.g;
+      d = state.d;
+      depth = state.depth;
+      sseH = state.sseH;
+      sseD = state.sseD;
+      rbox = state.rbox;
+      rloc = state.rloc;
+      nleft = state.nleft;
+      locs = new Loc[state.locs.length];
+      // deep copy of locs
+      for (int i=0; i<locs.length; i++) {
+        locs[i] = state.locs[i].copy();
+      }
+      boxlocs = new int[state.boxlocs.length];
+      for (int i=0; i<boxlocs.length; i++) {
+        boxlocs[i] = state.boxlocs[i];
+      }
+    }
+    
+    @Override
+    public boolean equals(Object obj) {
+      DRobotState o = (DRobotState)obj;
+      if (rloc != o.rloc || rbox != o.rbox || nleft != o.nleft)
+        return false;
+      for (int i = 0; i < locs.length; i++) {
+        if (!locs[i].equals(o.locs[i]))
+          return false;
+      }       
+      return true;
+    }
+  }
+  
+  private void fatal(String msg) {
+    System.err.println(msg);
+    System.exit(1);
+  }
+  
+  private int getInt(String s) {
+    String[] tokens = s.split(":");
+    return Integer.parseInt(tokens[1].trim());
+  }
+  
+  public DRobot(InputStream stream) {
+    int nrobots;
+    BufferedReader in = new BufferedReader(
+        new InputStreamReader(stream));
+    try {
+
+      nlocs = getInt(in.readLine());
+      ncranes = getInt(in.readLine());
+      nboxes = getInt(in.readLine());
+      npiles = getInt(in.readLine());
+      nrobots = getInt(in.readLine());
+      
+      if (nrobots != 1)
+        fatal("Multiple robots are not supported");
+
+      adj = new double[nlocs][nlocs];      
+      maxcranes = new int[nlocs];
+      maxpiles = new int[nlocs];
+      
+      initlocs = new Loc[nlocs];
+      for (int i=0; i<initlocs.length; i++)
+        initlocs[i] = new Loc();
+      goal = new int[nboxes];      
+      for (int i=0; i<goal.length; i++)
+        goal[i] = -1;
+      
+      int[] pilelocs = new int[npiles];
+
+      int loc = -1;
+      String line = null;
+      while ((line = in.readLine()) != null) {
+        line = line.trim();
+        String[] toks = line.split("\\s+");        
+        if (toks.length == 0) {
+          continue;
+        }
+        if (toks[0].equals("location")) {
+          loc = Integer.parseInt(toks[1]);
+          if (loc < 0 || loc >= nlocs) {
+            fatal("Invalid location "+loc);
+          }
+        } else if (toks[0].equals("adjacent:")) {
+          if (toks.length != nlocs + 1) {
+            fatal("Malformed adjacency list for location "+loc);
+          }
+          for (int i = 1; i < toks.length; i++) {
+            Double d = Double.parseDouble(toks[i]);
+            adj[loc][i-1] = d;
+          }
+        } else if (toks[0].equals("cranes:")) {
+          maxcranes[loc] = toks.length-1;
+        } else if (toks[0].equals("piles:")) {
+          for (int i = 1; i < toks.length; i++) {            
+            int p = Integer.parseInt(toks[i]);
+            if (p < 0 || p >= npiles)
+              fatal("Malformed pile list, pile "+p+" is out of bounds");
+            pilelocs[p] = loc;
+            maxpiles[loc]++;
+          }
+        } else if (toks[0].equals("pile")) {
+          if (toks.length != 2) {
+            fatal("Malformed pile descriptor");
+          }
+          int pnum = Integer.parseInt(toks[1]);
+          if (pnum < 0 || pnum >= npiles) {
+            fatal("Malformed pile descriptor, pile "+pnum+" is out of bounds");
+          }
+          line = in.readLine();
+          if (line == null || line.trim().length() == 0) {
+            continue;            
+          }
+          line = line.trim();
+          toks = line.split("\\s+");          
+          Pile p = new Pile();
+          for (int i = 0; i < toks.length; i++) {            
+            int box = Integer.parseInt(toks[i]);            
+            if (box < 0 || box >= nboxes) {
+              fatal("Malformed pile, box "+box+" is out of bounds");
+            }
+            p.stack.add(box);
+          }
+          if (p.stack.size() > 0) {
+            initlocs[pilelocs[pnum]].piles.add(p);
+          }
+        } else if (toks[0].equals("container")) {
+          if (toks.length != 4) {
+            fatal("Malformed goal descriptor");
+          }          
+          int box = Integer.parseInt(toks[1]);          
+          if (box < 0 || box >= nboxes) {
+            fatal("Out of bound container "+box+" in a goal descriptor");
+          }          
+          int dest = Integer.parseInt(toks[3]);
+          if (dest < 0 || dest >= nlocs) {
+            fatal("Out of bound location "+dest+" in goal descriptor");
+          }
+          goal[box] = dest;
+        }
+      }
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+    
+    // compute bit masks for bit twiddling states in pack/unpack
+    loc_bits = (int) Math.ceil(log2(nlocs));
+    loc_mask = mask(loc_bits);
+    pos_bits = (int) Math.ceil(log2(npiles * nboxes + ncranes + 1));
+    pos_mask = mask(pos_bits);
+    int reqbits = loc_bits + pos_bits * nboxes;
+    if (reqbits > 64) {
+      System.err.println("Too many bits required: "+reqbits);
+      System.exit(1);
+    }
+    
+    initheuristic();
+  }
+
+  private double log2(int x) {
+    return Math.log(x)/Math.log(2);
+  }
+  
+  @Override
+  public DRobotState initial() {
+    DRobotState s = new DRobotState (this, initlocs, -1, 0);
+    double p[] = this.hd(s);
+    s.h = p[0];
+    s.h1 = p[0];
+    s.d = p[1];
+    return s;
+  }
+  
+  private void initheuristic() {
+    shortest = new double[nlocs*nlocs][2];
+    for (int i = 0; i < nlocs; i++) {
+      for (int j = 0; j < nlocs; j++) {
+        double cost = adj[i][j];
+        if (i == j)
+          shortest[i*nlocs + j] = new double[]{0,0};
+        else if (Double.MAX_VALUE == cost)
+          shortest[i*nlocs + j] = new double[]{cost,cost};
+        else
+          shortest[i*nlocs + j] = new double[]{cost,1.0d};
+      }
+    }
+    for (int k = 0; k < nlocs; k++) {
+      for (int i = 0; i < nlocs; i++) {
+        for (int j = 0; j < nlocs; j++) {
+          double c = shortest[i*nlocs + k][0] + shortest[k*nlocs + j][0];
+          if (c < shortest[i*nlocs + j][0])
+            shortest[i*nlocs + j][0] = c;
+    
+          double d = shortest[i*nlocs + k][1] + shortest[k*nlocs + j][1];
+          if (c < shortest[i*nlocs + j][1])
+            shortest[i*nlocs + j][1] = d;
+        }
+      }
+    }
+  }
+  
+  // hd_sumethan
+  private double[] hd(DRobotState s) {
+    if (s.nleft == 0)
+      return new double[]{0, 0};
+
+    double h = 0, d = 0;
+
+    // Each out-of-place box must move to its goal.
+    for (int b = 0; b < goal.length; b++) {
+      if (goal[b] < 0)
+        continue;
+      double[] p = shortest[s.boxlocs[b]*nlocs + goal[b]];
+      h += p[0];
+      d += p[1];
+    }
+
+    // All execpt for the last out-of-place box must be unloaded
+    // from the robot.
+    h += ( ((double)(s.nleft-1))*LoadCost);
+    d += s.nleft-1;
+
+    for (int l = 0; l < s.locs.length; l++) {
+      Loc loc = s.locs[l];
+      // Each out-of-place box on a crane must be
+      // loaded onto the robot.
+      for (int c = 0; c < loc.cranes.size(); c++)  {
+        int box = loc.cranes.get(c);
+        if (goal[box] < 0 || goal[box] == l)
+          continue;
+        h += LoadCost;
+        d += 1;
+      }
+
+      // Each out-of-place box on a stack must be popped
+      // onto a crane, then moved to the robot.
+      for (int p = 0; p < loc.piles.size(); p++) {
+        Pile pile = loc.piles.get(p);
+        for (int ht = 0; ht < pile.stack.size(); ht++) {
+          int box = pile.stack.get(ht);
+          if (goal[box] < 0 || goal[box] == l)
+            continue;
+          //FIXME: bug? h += PopCostFact*(ht + 2) + LoadCost;
+          h += PopCostFact*(ht + 2) + LoadCost;
+          //h += ((PopCostFact*((double)(ht+1.0))) + LoadCost);
+          d += 2;
+        }
+      }
+      
+    }
+    
+    return new double[]{h, d};
+  }
+  
+  // hd_sumdeepest
+  private double[] hd_sumdeepest(DRobotState s) {
+    if (s.nleft == 0)
+      return new double[]{0, 0};
+
+    double h = 0, d = 0;
+
+    // Each out-of-place box must move to its goal.
+    int containersOutOfPlace = s.nleft;
+    for (int b = 0; b < goal.length; b++) {
+      if (goal[b] < 0 /*|| goal[b] == s.boxlocs[b]*/) 
+        continue;
+      double[] p = shortest[s.boxlocs[b]*nlocs + goal[b]];
+      h += p[0];
+      d += p[1];
+    }
+        
+    // Find all deepest packages
+    List<Integer> deepestList = deepest(s);
+    
+    // Adjust d for deepest
+    for (int b : deepestList) {
+      double bd = (double)b;
+      // cost to move all boxes above b and b
+      h += (((bd * (bd + 1.0)) / 2.0) * PopCostFact);
+      // lift, load, drive, unload, return
+      d += ((b * 5) - 1);
+    }
+    
+    int oncrane = onCrane(s)*2;
+    int onbots = onRobots(s);
+    d += (oncrane + onbots);
+    
+    double loads = containersOutOfPlace;
+    h += (loads*LoadCost);
+    
+    return new double[]{h, d};
+  }
+  
+  private int onRobots(DRobotState s) {
+    if (s.rbox >= 0 && s.rloc != goal[s.rbox] && goal[s.rbox] >= 0) 
+      return 1;
+    else
+      return 0;
+  }
+  
+  private int onCrane(DRobotState s) {
+    int oncranes = 0;
+    for (int l = 0; l < s.locs.length; l++) {
+      Loc loc = s.locs[l];
+      for (int c = 0; c < loc.cranes.size(); c++)  {
+        int box = loc.cranes.get(c);
+        if (goal[box] < 0 || goal[box] == l)
+          continue;
+        oncranes++;
+      }
+    }
+    return oncranes;
+  }
+  
+  private List<Integer> deepest(DRobotState s) {
+    List<Integer> deepestList = new ArrayList<Integer>();
+    for (int l = 0; l < s.locs.length; l++) {
+      Loc loc = s.locs[l];
+      for (int p = 0; p < loc.piles.size(); p++) {
+        Pile pile = loc.piles.get(p);
+        int deepest = 0;
+        for (int ht = 0; ht < pile.stack.size(); ht++) {
+          int box = pile.stack.get(ht);
+          if (goal[box] < 0 || goal[box] == l)
+            continue;
+          deepest = ht+1;
+        }
+        if (deepest > 0) {
+          deepestList.add(deepest);
+        }
+      }
+    }
+    return deepestList;
+  }
+  
+  @Override
+  public double h(DRobotState state) {
+    if (state.h < 0) {
+      double[] p = hd(state);
+      state.h = p[0];
+      state.d = p[1];
+    }
+    return state.h;
+  }
+
+  @Override
+  public double hHat(DRobotState state) {
+    if (state.h < 0 || state.d < 0) {
+      h(state);
+    }
+    return (hHat == null)
+        ? state.h1
+        : hHat.compute(state);
+  }
+
+  @Override
+  public double dHat(DRobotState state) {
+    if (state.h < 0 || state.d < 0) {
+      d(state);
+    }
+    return (dHat == null)
+        ? state.d
+        : dHat.compute(state);
+  }
+
+  @Override
+  public double g(DRobotState state) {
+    return state.g;
+  }
+
+  @Override
+  public double d(DRobotState state) {
+    if (state.d < 0) {
+      double[] p = hd(state);
+      state.h = p[0];
+      state.d = p[1];
+    }
+    return state.d;
+  }
+
+  @Override
+  public int depth(DRobotState state) {
+    return state.depth;
+  }
+
+  @Override
+  public double sseH(DRobotState state) {
+    return state.sseH;
+  }
+  
+  @Override
+  public double sseD(DRobotState state) {
+    return state.sseD;
+  }  
+
+  @Override
+  public double h2(DRobotState state) {
+    return state.h2;
+  }
+
+  @Override
+  public boolean isGoal(DRobotState state) {
+    return state.nleft == 0;
+  }
+
+  @Override
+  public int nops(DRobotState state) {
+    if (state.ops == null) 
+      initOps(state);
+    return state.ops.length;
+  }
+
+  @Override
+  public Oper nthop(DRobotState state, int nth) {
+    if (state.ops == null) 
+      initOps(state);
+    return state.ops[nth];
+  }
+
+  @Override
+  public Edge<DRobotState, Oper> apply(DRobotState s, Oper o) {
+    double pf = s.g+s.h;
+    double pg = s.g;
+    double ph = s.h;
+    double pd = s.d;
+    double p_herr = s.sseH;
+    double p_derr = s.sseD;
+    
+    double cost = 0.0d;
+    DRobotUndo undo = new DRobotUndo(s);
+    
+    s.ops = null; // reset ops
+    switch (o.type) {
+    case Oper.PUSH: {
+      int c = o.x;
+      int p = o.y;
+      assert (s.rloc < s.locs.length);
+      Loc l = s.locs[s.rloc];
+      int box = l.rmcrane(c);
+      int bottom = box;
+      int sz = 0;
+      if (p < l.piles.size()) {
+        bottom = l.piles.get(p).stack.get(0);
+        sz = l.piles.get(p).stack.size();
+      }
+      l.push(box, p);
+
+      p = l.findpile(bottom);
+      assert (p >= 0);
+      undo.revop = new Oper(Oper.POP, p);
+      cost = PopCostFact * ((double)(sz + 1.0d));  // from the OCaml code
+      //revcost = PopCostFact * (sz + 2);
+      break;
+    }
+    case Oper.POP: {
+      int p = o.x;
+      Loc l = s.locs[s.rloc];
+      assert (p < l.piles.size());
+      int sz = l.piles.get(p).stack.size();
+      int bottom = l.piles.get(p).stack.get(0);
+      int box = l.pop(p);
+      l.addcrane(box);
+
+      int c = l.findcrane(box);
+      assert (c >= 0);
+      if (sz == 1)
+        p = l.piles.size();
+      else
+        p = l.findpile(bottom);
+      undo.revop = new Oper(Oper.PUSH, c, p);
+      cost = PopCostFact * ((double)(sz + 1.0d));  // from the OCaml code
+      //revcost = PopCostFact * sz;
+
+      break;
+    }
+    case Oper.LOAD: {
+      assert (s.rbox < 0);
+      Loc l = s.locs[s.rloc];
+      int c = o.x;
+      s.rbox = l.rmcrane(c);
+
+      undo.revop = new Oper(Oper.UNLOAD);
+      cost = LoadCost;
+      //revcost = LoadCost;
+
+      break;
+    }
+    case Oper.UNLOAD: {
+      assert (s.rbox >= 0);
+      Loc l = s.locs[s.rloc];
+      int box = s.rbox;
+      l.addcrane(box);
+      assert (l.cranes.size() <= maxcranes[s.rloc]);
+      s.rbox = -1;
+
+      int c = l.findcrane(box);
+      assert (c >= 0);
+      undo.revop = new Oper(Oper.LOAD, c);
+      cost = LoadCost;
+      //revcost = LoadCost;
+
+      break;
+    }
+    case Oper.MOVE: {
+      int src = s.rloc, dst = o.x;
+
+      // Are we moving a box out of its goal location
+      // or to its goal location?
+      if (s.rbox >= 0 && goal[s.rbox] >= 0) {
+        if (goal[s.rbox] == s.rloc)
+          s.nleft++;
+        else if (goal[s.rbox] == dst)
+          s.nleft--;
+        s.boxlocs[s.rbox] = dst;
+      }
+
+      s.rloc = dst;
+
+      undo.revop = new Oper(Oper.MOVE, src);
+      cost = adj[src][dst];
+      //revcost = adj[dst][src];
+
+      break;
+    }
+    default:
+      System.err.println("Unknown operator type "+o.type);
+      System.exit(1);
+    }
+    
+    Edge<DRobotState, Oper> edge = 
+        new Edge<DRobotState, Oper>(cost, undo.revop, undo);
+    
+    s.depth += 1;
+    s.g += edge.cost;
+    double p[] = this.hd(s);
+    s.h = p[0];
+    s.d = p[1];
+    
+    // path max
+    double tcost = s.g-pg;
+    s.h = Math.max(s.h, (ph-tcost));
+    
+    s.h1 = s.h;
+    
+    /*if (hHat != null)
+      s.sseH += computeSSE(edge.cost, s.h1, ph);
+    if (dHat != null)
+      s.sseD += computeSSE(1, s.d, pd);*/
+    
+    if (hHat != null) {
+      double f = s.g+s.h;
+      s.sseH = (f - pf) + p_herr;
+      //s.sseH = (s.sseH < 0) ? p_herr : s.sseH;
+      assert s.sseH < Double.MAX_VALUE;
+    }
+    if (dHat != null) {
+      s.sseD = (s.d - (pd - 1 - p_derr));
+      //s.sseD = (s.sseD < 0) ? p_derr : s.sseD;
+      assert s.sseD < Double.MAX_VALUE;
+    }
+    
+    return edge;
+  }
+  
+  /*private double computeSSE(double ec, double ch, double ph) {
+    return (ec + ch) - ph;
+  }*/
+
+  @Override
+  public DRobotState copy(DRobotState state) {
+    return new DRobotState(state);
+  }
+
+  private long mask(int bits) {
+    return ~((~0) << bits);
+  }
+  
+  @Override
+  public long pack(DRobotState state) {
+    int pos[] = new int[nboxes+1];
+    for (int i = 0; i < nboxes+1; i++)
+      pos[i] = 0;
+
+    int cur = 0;
+    if (state.rbox >= 0)
+      pos[state.rbox] = cur;
+    cur++;
+
+    for (int i = 0; i < state.locs.length; i++) {
+      Loc l = state.locs[i];
+      for (int c = 0; c < l.cranes.size(); c++)
+        pos[l.cranes.get(c)] = cur + c;
+      cur += maxcranes[i];
+      for (int p = 0; p < l.piles.size(); p++) {
+        for (int s = 0; s < l.piles.get(p).stack.size(); s++) {
+          pos[l.piles.get(p).stack.get(s)] = cur + s + p*nboxes;
+        }
+      }
+      cur += maxpiles[i]*nboxes;
+    }
+    pos[nboxes] = state.rloc;
+    
+    // pack positions into 64 bits
+    long packed = 0;
+    for (int i=pos.length-2; i>=0; i--) {
+      packed |= pos[i] & pos_mask;
+      if (i > 0)
+        packed <<= pos_bits;
+      else
+        packed <<= loc_bits;
+    }
+    packed |= pos[pos.length-1] & loc_mask;
+    
+    //DEBUG
+    /*DRobotState test = unpack(packed);
+    if (!test.equals(state)) {
+      System.err.println("pack is not working");
+      System.exit(1);
+    }*/
+    
+    return packed;
+  }
+
+  @Override
+  public void unpack(long packed, DRobotState dst) {
+    dst.ops = null;
+    int rloc = (int) (packed & loc_mask);
+    packed >>= loc_bits;
+    
+    int pos[] = new int[nboxes];
+    for (int i=0; i<nboxes; i++) {
+      long p = packed & pos_mask;      
+      pos[i] = (int) p;
+      packed >>= pos_bits;
+    }    
+    
+    int rbox = -1;
+    
+    Loc locs[] = new Loc[nlocs];
+    for (int i=0; i<locs.length; i++) {
+      locs[i] = new Loc();
+    }
+    
+    for (int b = 0; b < nboxes; b++) {
+      int p = pos[b];
+      if (p == 0) {
+        rbox = b;
+        continue;
+      }
+      p--;
+
+      for (int l = 0; l < nlocs; l++) {
+        Loc loc = locs[l];
+        if (p < maxcranes[l]) {
+          if (loc.cranes.size() <= p) {
+            loc.cranes.setSize(p+1);
+          }
+          loc.cranes.set(p, b);
+          break;
+        }
+        p -= maxcranes[l];
+
+        if (p < maxpiles[l]*nboxes) {
+          int pid = p / nboxes;
+          int ht = p % nboxes;
+          if (loc.piles.size() <= pid) {
+            loc.piles.setSize(pid+1);
+            loc.piles.set(pid, new Pile());
+          }
+          Pile pile = loc.piles.get(pid);
+          if (pile.stack.size() <= ht) {
+            pile.stack.setSize(ht+1);
+          }
+          pile.stack.set(ht, b);
+          break;
+        }
+        p -= maxpiles[l]*nboxes;
+      }
+      //fatal("unreachable");
+    }
+    
+    dst.init(this, locs, rbox, rloc);
+    
+    // compute heuristics
+    double p[] = hd(dst);
+    dst.h = p[0];
+    dst.h1 = p[0];
+    dst.d = p[1];
+  }
+  
+  @Override
+  public DRobotState unpack(long packed, double g, double d, int depth,
+      double sseH, double sseD) {
+    DRobotState dst = new DRobotState();
+    unpack(packed, g, d, depth, sseH, sseD, dst);
+    return dst;
+  }
+
+  @Override
+  public DRobotState unpack(long packed) {
+    DRobotState dst = new DRobotState();
+    unpack(packed, dst);
+    return dst;
+  }
+
+  @Override
+  public void unpack(long packed, double g, double d, int depth, 
+      double sseH, double sseD, DRobotState state) {
+    unpack(packed, state);
+    state.g = g;
+    //state.d = d;
+    state.depth = depth;
+    state.sseH = sseH;
+    state.sseD = sseD;
+  }
+  
+  @Override
+  public void unpack(long packed, double h, double g, double d, int depth, 
+      double sseH, double sseD, DRobotState state) {
+    unpack(packed, g, d, depth, sseH, sseD, state);
+  }
+
+  @Override
+  public int getAbstraction(DRobotState state) {
+    // TODO implement
+    return 0;
+  }
+
+  @Override
+  public int getAbstractionSize() {
+    // TODO implement
+    return 0;
+  }
+
+  @Override
+  public void setHeuristic(Heuristic<DRobotState> heuristic) {
+    // TODO do nothing?
+  }
+
+  @Override
+  public void setHHat(Heuristic<DRobotState> hHat) {
+    this.hHat = hHat;
+  }
+
+  @Override
+  public void setDHat(Heuristic<DRobotState> dHat) {
+    this.dHat = dHat;
+  }
+
+  @Override
+  public long pattern(DRobotState state, int pattern) {
+    return 0;
+  }
+
+  private class DRobotUndo implements Undo<DRobotState> {
+    private double h, h1, h2, g, d, sseH, sseD;
+    private int depth;
+    private Oper ops[];
+    private Oper revop;
+    private DRobotUndo(DRobotState state) {
+      this.h = state.h;
+      this.h1 = state.h1;
+      this.h2 = state.h2;
+      this.g = state.g;
+      this.d = state.d;
+      this.depth = state.depth;
+      this.sseH = state.sseH;
+      this.sseD = state.sseD;
+      this.ops = state.ops;
+    }
+    @Override
+    public void undo(DRobotState state) {
+      apply(state, revop);
+      state.h = this.h;
+      state.h1 = this.h1;
+      state.h2 = this.h2;
+      state.g = this.g;
+      state.d = this.d;
+      state.depth = this.depth;
+      state.sseH = this.sseH;
+      state.sseD = this.sseD;
+      state.ops = this.ops;
+    }
+    
+  }
+  
+  private void dumpState(DRobotState s) {
+    System.out.println("h: "+s.h);
+    System.out.println("d: "+s.d);
+    System.out.println("robot location: "+s.rloc);
+    System.out.println("robot contents: "+s.rbox);
+    System.out.println("out of place boxes: "+s.nleft);
+    for (int l = 0; l < s.locs.length; l++) {
+      System.out.println("loc " + l +":");
+      Loc loc = s.locs[l];
+      for (int c = 0; c < loc.cranes.size(); c++)
+        System.out.println("\tcrane: " + loc.cranes.get(c));
+      for (int p = 0; p < loc.piles.size(); p++) {
+        Pile pile = loc.piles.get(p);
+        System.out.print("\tpile:");
+        for (int h = 0; h < pile.stack.size(); h++)
+          System.out.print(" "+pile.stack.get(h));
+        System.out.println();
+      }
+    }
+  }
+
+}
