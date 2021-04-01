@@ -21,8 +21,6 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
 
-import junit.framework.Assert;
-
 import org.cs4j.core.SearchAlgorithm;
 import org.cs4j.core.SearchDomain;
 import org.cs4j.core.SearchResult;
@@ -35,6 +33,8 @@ import org.cs4j.core.algorithms.RBFS;
 import org.cs4j.core.algorithms.WAstar;
 import org.cs4j.core.algorithms.WRBFS;
 import org.cs4j.core.domains.FifteenPuzzle;
+
+import org.junit.Assert;
 import org.junit.Test;
 
 public class TestAllBasics {
@@ -99,9 +99,9 @@ public class TestAllBasics {
 		SearchResult result = algo.search(domain);
 		Solution sol = result.getSolutions().get(0);
 		Assert.assertTrue(result.getWallTimeMillis() > 1);
-		Assert.assertTrue(result.getWallTimeMillis() < 200);
+		Assert.assertTrue(result.getWallTimeMillis() < 400);
 		Assert.assertTrue(result.getCpuTimeMillis() > 1);
-		Assert.assertTrue(result.getCpuTimeMillis() < 200);
+		Assert.assertTrue(result.getCpuTimeMillis() < 400);
 		Assert.assertTrue(result.getGenerated() == generated);
 		Assert.assertTrue(result.getExpanded() == expanded);			
 		Assert.assertTrue(sol.getCost() == cost);
